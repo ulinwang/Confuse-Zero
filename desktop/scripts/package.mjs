@@ -1,13 +1,14 @@
 import { packager } from "@electron/packager";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 const out = path.resolve("..", "dist");
 const stage = await mkdtemp(path.join(tmpdir(), "confuse-dmg-"));
 const backend = path.resolve("..", "target", "release", "confuse");
-const version = "0.1.0";
+const manifest = JSON.parse(await readFile("package.json", "utf8"));
+const version = manifest.version;
 const destination = path.join(out, "Confuse-Zero-" + version + "-arm64.dmg");
 const signIdentity = process.env.CONFUSE_SIGN_IDENTITY || "-";
 const signing = signIdentity === "-" ? ["--sign", "-"] : ["--sign", signIdentity, "--options", "runtime", "--timestamp"];
@@ -24,7 +25,7 @@ try {
     name: "Confuse Zero",
     appBundleId: "io.github.ulinwang.confuse-zero",
     appVersion: version,
-    electronVersion: "45.5.0",
+    electronVersion: manifest.devDependencies.electron,
     platform: "darwin",
     arch: "arm64",
     asar: true,

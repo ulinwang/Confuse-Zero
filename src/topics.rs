@@ -351,29 +351,72 @@ async fn fit_map(
                 groups.entry(label).or_default().push(item);
             }
         }
+        let previous = result(store, project, id, Some(facet))?;
+        let mut previous_members: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for assignment in previous["assignments"].as_array().into_iter().flatten() {
+            if let (Some(topic), Some(trace)) = (
+                assignment["topicStableId"].as_str(),
+                assignment["traceId"].as_str(),
+            ) {
+                previous_members
+                    .entry(topic.to_owned())
+                    .or_default()
+                    .insert(trace.to_owned());
+            }
+        }
+        let mut claimed = BTreeSet::new();
         let mut topics = Vec::new();
         let mut labels = BTreeMap::new();
         for (label, items) in groups {
-            let examples = items
+            let members = items
                 .iter()
-                .take(20)
-                .map(|item| truncate(&item.text, 400))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let instruction = format!(
-                "Return a short topic name on the first line, then a one-sentence description of this cluster.\n{examples}"
+                .map(|item| item.trace.clone())
+                .collect::<BTreeSet<_>>();
+            let matched = previous_members
+                .iter()
+                .filter(|(id, _)| !claimed.contains(*id))
+                .filter_map(|(id, previous)| {
+                    let shared = previous.intersection(&members).count();
+                    (shared * 2 > previous.len().max(members.len())).then_some((id, shared))
+                })
+                .max_by_key(|(_, shared)| *shared)
+                .map(|(id, _)| id);
+            let known = matched.and_then(|stable_id| {
+                previous["topics"]
+                    .as_array()?
+                    .iter()
+                    .find(|topic| topic["stableId"] == *stable_id)
+            });
+            let topic = if let Some(known) = known {
+                let mut row = known.clone();
+                row["traceCount"] = json!(members.len());
+                claimed.insert(row["stableId"].as_str().unwrap_or_default().to_owned());
+                row
+            } else {
+                let examples = items
+                    .iter()
+                    .take(20)
+                    .map(|item| truncate(&item.text, 400))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let instruction = format!(
+                    "Return a short topic name on the first line, then a one-sentence description of this cluster.\n{examples}"
+                );
+                let (answer, _) = naming.complete(project, None, &instruction).await?;
+                let (title, description) = answer.trim().split_once('\n').unwrap_or((&answer, ""));
+                let signature = members.into_iter().collect::<Vec<_>>().join(",");
+                let topic = stable_id(&[project, id, facet, &signature], 16);
+                json!({"stableId":topic,"name":truncate(title,160),"description":truncate(description,1000),
+                    "facetId":facet,"ruleId":id,"traceCount":items.len()})
+            };
+            labels.insert(
+                label,
+                topic["stableId"]
+                    .as_str()
+                    .context("Missing topic ID")?
+                    .to_owned(),
             );
-            let (answer, _) = naming.complete(project, None, &instruction).await?;
-            let (title, description) = answer.trim().split_once('\n').unwrap_or((&answer, ""));
-            let signature = items
-                .iter()
-                .map(|item| item.trace.as_str())
-                .collect::<Vec<_>>()
-                .join(",");
-            let topic = stable_id(&[project, id, facet, &signature], 16);
-            topics.push(json!({"stableId":topic,"name":truncate(title,160),"description":truncate(description,1000),
-                "facetId":facet,"ruleId":id,"traceCount":items.len()}));
-            labels.insert(label, topic);
+            topics.push(topic);
         }
         let assignments=summaries.into_iter().zip(fit.labels).zip(fit.coordinates)
             .map(|((item,label),coordinates)|json!({"traceId":item.trace,"facetId":facet,"ruleId":id,

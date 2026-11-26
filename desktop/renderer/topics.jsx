@@ -51,7 +51,7 @@ export function Topics({ api, tick, refresh, openTrace, filterByTopic, navigate 
     </div>
     {(fault||error||resultError||active?.error) && <p className="error" role="alert">{fault||error||resultError||active?.error}</p>}
     {!active && <Empty title={providers.length ? "No topic maps yet" : "Set up model connections"}
-      action={providers.length ? "New live map" : "Model connections"} onAction={()=>providers.length ? setEditing({mode:"live"}) : navigate("Model connections")}/>}
+      action={providers.length ? undefined : "Model connections"} onAction={()=>navigate("Model connections")}/>}
     {active && <>
       <div className="section-heading topic-head">
         <div className="tabs" aria-label="Topics facets">
