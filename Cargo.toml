@@ -1,0 +1,36 @@
+[package]
+name = "confuse"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+flate2 = "1"
+hex = "0.4"
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "trace", "with-serde"] }
+percent-encoding = "2"
+prost = "0.14"
+rusqlite = { version = "0.39", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
