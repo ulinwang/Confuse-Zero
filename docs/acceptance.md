@@ -1,13 +1,14 @@
 # Confuse-Zero acceptance rules
 
-Confuse is an Apple Silicon macOS application for one macOS user and multiple isolated projects. The release candidate is a local-install DMG. Langfuse v4.88.0 is the behavior and API baseline. The earlier Confuse desktop at commit 043c7f90338654a14d7bb81e9cf4101c48e5851a is the Agent behavior reference.
+Confuse is an Apple Silicon macOS application for one macOS user and multiple isolated projects. It reuses the Electron desktop shell from Confuse and bundles the Rust backend as a child process of the application. The release candidate is a local-install DMG. Langfuse v4.88.0 is the behavior and API baseline. The earlier Confuse desktop at commit 043c7f90338654a14d7bb81e9cf4101c48e5851a is the Agent behavior reference.
 
 ## What counts as passing
 
 - Use [the matrix](acceptance.tsv) as the release checklist. Each row needs a named automated check or reproducible real-device check, expected results, and evidence from the candidate commit. A screenshot cannot replace a data/API assertion. A compiled build cannot replace a visual or lifecycle check.
 - Use synthetic conversations and isolated Agent roots for capture, failure injection, and uninstall tests. Real-device detection may inspect installed executables, app bundle identifiers, package metadata, and directory metadata. Release evidence contains only synthetic data.
 - Compare user-visible flows with the upstream open-source pages and compare status, authentication, defaults, filters, pagination, and JSON fields with the pinned [Fern contracts](https://github.com/langfuse/langfuse/tree/v4.88.0/fern/apis/server/definition). The desktop equivalents of organization membership, scheduled export, and notifications are macOS user ownership, local folders, and the Confuse notification center.
-- The application runs with Docker, Node, Python, and other service daemons absent. Run the bundled app from Finder with its usual limited PATH. Run official SDK compatibility checks separately using Python Langfuse 5.2.0 and JavaScript Langfuse 6.1.1.
+- The packaged Electron application and Rust backend run with Docker, separately installed Node.js, Python, and service daemons absent. Run the bundled app from Finder with its usual limited PATH. Run official SDK compatibility checks separately using Python Langfuse 5.2.0 and JavaScript Langfuse 6.1.1.
+- Load only packaged Electron front-end assets, with context isolation, sandboxing and an explicit preload bridge. Verify Electron quits its own Rust process, both listeners close, and the next start resumes work.
 - Capture the window on a physical Apple Silicon Mac. Inspect default and minimum window sizes in light and dark appearance. Record installer checksum, installed size, cold start to interactive window, and idle resident memory without Agent jobs running. Record both the result and its measurement conditions.
 
 ## Agent fixtures
