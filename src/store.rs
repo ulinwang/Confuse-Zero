@@ -50,6 +50,7 @@ impl Store {
 
     fn initialize(conn: Connection) -> Result<Self> {
         conn.execute_batch(include_str!("store.sql"))?;
+        conn.execute_batch(include_str!("agents/store.sql"))?;
         conn.execute(
             "INSERT OR IGNORE INTO projects(id, name, created_ns) VALUES(?1, 'Local', ?2)",
             params![DEFAULT_PROJECT, now_ns()],
