@@ -22,3 +22,15 @@ jobs:
           assert all(len(row) == 5 and all(row.values()) for row in rows)
           assert {'DESKTOP', 'AGENT', 'SDK', 'OBS', 'MGMT', 'TOPICS', 'PKG'} <= {i.split('-')[0] for i in ids}
           PY
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned Rust
+        run: rustup show
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked
