@@ -97,6 +97,7 @@ pub struct TraceFilter<'a> {
     pub name: Option<&'a str>,
     pub user: Option<&'a str>,
     pub source: Option<&'a str>,
+    pub topic: Option<&'a str>,
     pub from: Option<i64>,
     pub to: Option<i64>,
 }

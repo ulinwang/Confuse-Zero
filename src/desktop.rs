@@ -23,6 +23,8 @@ struct Request {
 
 pub async fn run(store: Store, home: PathBuf) -> Result<()> {
     let mut service = Desktop::open(store.clone(), home).await?;
+    let topic_task = tokio::spawn(crate::topics::worker(store.clone()));
+    let workspace_task = tokio::spawn(crate::workspace::worker(store.clone()));
     let collector_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(2));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -53,6 +55,8 @@ pub async fn run(store: Store, home: PathBuf) -> Result<()> {
         };
         if request.channel == "desktop.quit" {
             collector_task.abort();
+            topic_task.abort();
+            workspace_task.abort();
             if let Some(server) = service.server.take() {
                 server.stop().await;
             }
@@ -66,6 +70,8 @@ pub async fn run(store: Store, home: PathBuf) -> Result<()> {
         send(&mut output, value).await?;
     }
     collector_task.abort();
+    topic_task.abort();
+    workspace_task.abort();
     if let Some(server) = service.server.take() {
         server.stop().await;
     }
@@ -206,13 +212,17 @@ impl Desktop {
                 self.listener_error = None;
                 json!(format!("http://127.0.0.1:{port}"))
             }
-            "desktop.cleanup" => json!(true),
+            "desktop.cleanup" => {
+                self.store.remove_provider_keys()?;
+                json!(true)
+            }
             "dashboard.summary" => self.summary(project)?,
             "traces.list" => {
                 let filter = TraceFilter {
                     query: payload["query"].as_str().filter(|s| !s.is_empty()),
                     source: payload["source"].as_str().filter(|s| !s.is_empty()),
                     session: payload["session"].as_str().filter(|s| !s.is_empty()),
+                    topic: payload["topic"].as_str(),
                     ..Default::default()
                 };
                 let (traces, total) = self.store.traces(project, &filter, 100, offset(payload))?;
@@ -240,7 +250,9 @@ impl Desktop {
                 json!({"data":data,"total":total})
             }
             "scores.put" => self.store.put_score(project, payload["score"].clone())?,
-            _ => bail!("Unsupported desktop action"),
+            _ => crate::workspace::handle(&self.store, project, channel, payload)
+                .await?
+                .context("Unsupported desktop action")?,
         };
         Ok(result)
     }
