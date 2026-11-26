@@ -7,6 +7,14 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
+async-stream = "0.3"
+futures-util = "0.3"
+hdbscan-rs = { version = "=0.6.1", default-features = false }
+holomap = { version = "=0.3.0", default-features = false }
+ndarray = "0.16"
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls", "stream"] }
+rquickjs = "0.11"
+security-framework = "3"
 axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }

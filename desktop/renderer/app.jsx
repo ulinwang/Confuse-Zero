@@ -6,30 +6,18 @@ import {
   Search, Settings, Terminal, Trash2, X
 } from "lucide-react";
 import { safeTriangle } from "./menu.cjs";
+import { Dialog, Empty, ValueBlock, count, time, duration, useQuery } from "./shared.jsx";
+import { Topics } from "./topics.jsx";
+import { Workspace } from "./workspace.jsx";
+import { BookOpen, Box, FlaskConical, Network, Sparkles, Tags, Upload } from "lucide-react";
 
 const agents = { "kimi-code":"Kimi Code", codex:"Codex", "claude-code":"Claude Code", "deepseek-harness":"DeepSeek Harness", pi:"Pi" };
 const pages = [
   ["Overview", LayoutDashboard], ["Tracing", Activity], ["Sessions", Layers3],
-  ["Scores", Check]
+  ["Topics", Tags], ["Dashboards", LayoutDashboard], ["Prompts", BookOpen], ["Skills", Box], ["Datasets", Database],
+  ["Evaluations", FlaskConical], ["Scores", Check], ["Playground", Sparkles], ["AI Gateway", Network], ["Exports", Upload]
 ];
 const emptyList = { data: [], total: 0 };
-const count = value => typeof value === "number" ? value.toLocaleString() : "—";
-const time = value => value ? new Date(value).toLocaleString() : "—";
-const duration = value => typeof value === "number" ? (value < 1 ? Math.round(value*1000)+" ms" : value.toFixed(2)+" s") : "—";
-
-function useQuery(api, channel, payload, dependencies, initial) {
-  const [state, setState] = useState(initial);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let current = true;
-    api(channel, payload).then(value => {
-      if (current) { setState(value); setError(""); }
-    }, reason => { if (current) setError(reason.message); });
-    return () => { current = false; };
-  }, [api, channel, ...dependencies]);
-  return [state, error];
-}
-
 function App() {
   const [state, setState] = useState(null);
   const [project, setProject] = useState("local");
@@ -43,6 +31,7 @@ function App() {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("");
   const [session, setSession] = useState("");
+  const [topic, setTopic] = useState(null);
   const [trace, setTrace] = useState(null);
   const [sdkKey, setSdkKey] = useState(null);
   const [notices] = useQuery(
@@ -69,6 +58,7 @@ function App() {
   function navigate(next) {
     setTrace(null);
     setSession("");
+    setTopic(null);
     setPage(next);
     setError("");
     setProjectMenu(false);
@@ -137,11 +127,16 @@ function App() {
                 await submit("traces.delete",{id:trace}); setTrace(null);
               }} update={refresh}/>
             : <Tracing api={api} tick={tick} query={query} source={source} session={session}
-                setQuery={setQuery} setSource={setSource} setSession={setSession} openTrace={openTrace}/>)}
+                setQuery={setQuery} setSource={setSource} setSession={setSession} topic={topic} setTopic={setTopic} openTrace={openTrace}/>)}
+          {page === "Topics" && <Topics api={api} tick={tick} refresh={refresh} openTrace={openTrace} navigate={navigate}
+            filterByTopic={(id,name)=>{navigate("Tracing");setTopic({id,name});setSource("");setQuery("");}}/>}
+          {["Dashboards","Prompts","Skills","Datasets","Evaluations","Playground","AI Gateway","Exports","Model connections"].includes(page)
+            && <Workspace key={page+project} page={page} api={api} tick={tick} refresh={refresh} navigate={navigate} openTrace={openTrace}
+              state={state} createKey={async kind=>setSdkKey(await submit("keys.create",{kind}))}/>}
           {page === "Sessions" && <Sessions api={api} tick={tick} select={id => {setSession(id);setPage("Tracing");}}/>}
           {page === "Scores" && <Scores api={api} tick={tick} openTrace={openTrace}/>}
           {page === "Settings" && <SettingsPage api={api} state={state} tick={tick} connect={() => setSetup(true)}
-            createKey={async kind => setSdkKey(await submit("keys.create",{kind}))}
+            modelConnections={()=>navigate("Model connections")} createKey={async kind => setSdkKey(await submit("keys.create",{kind}))}
             revoke={id => submit("keys.revoke",{id})} changePort={async port => {await submit("desktop.set-port",{port});await reload();}}/>}
         </div>
       </main>
@@ -218,21 +213,6 @@ function ProjectMenu({ projects, selected, select, create, showKeys, copy, close
       </div>}
     </div>
   </div>;
-}
-
-function Dialog({ title, children, close, wide = false }) {
-  const dialog = useRef(null);
-  useEffect(() => {
-    dialog.current.showModal();
-    return () => { dialog.current?.close(); };
-  }, []);
-  return <dialog className={wide ? "dialog wide" : "dialog"} ref={dialog} onCancel={event => {
-    event.preventDefault();
-    close?.();
-  }}>
-    <div className="dialog-head"><h2>{title}</h2>{close && <button className="icon ghost" aria-label="Close" onClick={close}><X size={18}/></button>}</div>
-    {children}
-  </dialog>;
 }
 
 function Onboarding({ api, done, close, canClose }) {
@@ -312,11 +292,6 @@ function Overview({ api, tick, openTrace, connect }) {
   </>;
 }
 
-function Empty({ title, action, onAction }) {
-  return <div className="empty"><span className="empty-icon"><Activity size={23}/></span><strong>{title}</strong>
-    {action && <button className="subtle" onClick={onAction}>{action}<ArrowRight size={14}/></button>}</div>;
-}
-
 function TraceTable({ rows, select, empty }) {
   return <div className="table-scroll">
     <table className="data-table">
@@ -330,15 +305,16 @@ function TraceTable({ rows, select, empty }) {
   </div>;
 }
 
-function Tracing({ api, tick, query, source, session, setQuery, setSource, setSession, openTrace }) {
+function Tracing({ api, tick, query, source, session, setQuery, setSource, setSession, topic, setTopic, openTrace }) {
   const [offset,setOffset]=useState(0);
-  const [result,error]=useQuery(api,"traces.list",{query,source,session,offset},[tick,query,source,session,offset],emptyList);
-  useEffect(()=>setOffset(0),[query,source,session]);
+  const [result,error]=useQuery(api,"traces.list",{query,source,session,topic:topic?.id,offset},[tick,query,source,session,topic,offset],emptyList);
+  useEffect(()=>setOffset(0),[query,source,session,topic]);
   return <>
     <div className="toolbar">
       <label className="search"><Search size={17}/><input aria-label="Search traces" placeholder="Search traces" value={query} onChange={event=>setQuery(event.target.value)}/></label>
       <select aria-label="Trace source" value={source} onChange={event=>setSource(event.target.value)}><option value="">All sources</option>{Object.values(agents).concat("SDK","Gateway","Playground").map(name=><option key={name}>{name}</option>)}</select>
       {session && <button className="subtle" onClick={()=>setSession("")}>Session <X size={14}/></button>}
+      {topic && <button className="subtle" onClick={()=>setTopic(null)}>{topic.name} <X size={14}/></button>}
     </div>
     {error && <p className="error" role="alert">{error}</p>}
     <TraceTable rows={result.data} select={openTrace} empty={<Empty title="No matching traces"/>}/>
@@ -434,12 +410,7 @@ function TraceDetail({ api, id, tick, remove, update }) {
   </>;
 }
 
-function ValueBlock({ name, value }) {
-  if (value==null) return null;
-  return <div className="value-block"><h4>{name}</h4><pre>{typeof value==="string" ? value : JSON.stringify(value,null,2)}</pre></div>;
-}
-
-function SettingsPage({ api, state, tick, connect, createKey, revoke, changePort }) {
+function SettingsPage({ api, state, tick, connect, modelConnections, createKey, revoke, changePort }) {
   const [sources,error] = useQuery(api,"agents.scan",{},[tick],{installations:[],sources:[]});
   const [keys] = useQuery(api,"keys.list",{},[tick],[]);
   const [port,setPort]=useState(state?.port || 32127);
@@ -453,6 +424,7 @@ function SettingsPage({ api, state, tick, connect, createKey, revoke, changePort
         return <tr key={item.agent}><td>{agents[item.agent]}</td><td>{item.executable?"Detected":"Unavailable"}</td>
           <td>{current ? current.pending?"Connecting":"Enabled" : "Disabled"}</td><td className="path" title={current?.selection.root||item.root}>{current?.selection.root||item.root}</td></tr>;
       })}</tbody></table>
+    <div className="section-heading"><h2>Models</h2><button className="subtle" onClick={modelConnections}>Model connections</button></div>
     <div className="section-heading"><h2>Local SDK</h2></div>
     <form className="inline-form" onSubmit={event=>{event.preventDefault();changePort(Number(port)).catch(()=>{});}}>
       <label className="field">Port<input type="number" min="1" max="65535" value={port} onChange={event=>setPort(event.target.value)}/></label>

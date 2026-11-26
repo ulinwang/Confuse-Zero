@@ -51,6 +51,8 @@ impl Store {
     fn initialize(conn: Connection) -> Result<Self> {
         conn.execute_batch(include_str!("store.sql"))?;
         conn.execute_batch(include_str!("agents/store.sql"))?;
+        conn.execute_batch(include_str!("resources.sql"))?;
+        conn.execute_batch(include_str!("topics.sql"))?;
         conn.execute(
             "INSERT OR IGNORE INTO projects(id, name, created_ns) VALUES(?1, 'Local', ?2)",
             params![DEFAULT_PROJECT, now_ns()],
@@ -287,7 +289,8 @@ impl Store {
                 AND (?2 IS NULL OR instr(lower(data),lower(?2))>0)
                 AND (?3 IS NULL OR session=?3) AND (?4 IS NULL OR name=?4)
                 AND (?5 IS NULL OR user_id=?5) AND (?6 IS NULL OR source=?6)
-                AND (?7 IS NULL OR start_ns>=?7) AND (?8 IS NULL OR start_ns<?8)";
+                AND (?7 IS NULL OR start_ns>=?7) AND (?8 IS NULL OR start_ns<?8)
+                AND (?9 IS NULL OR EXISTS(SELECT 1 FROM topic_assignments AS ta WHERE ta.project=traces.project AND ta.trace=traces.id AND ta.topic=?9))";
             let params = params![
                 project,
                 filter.query,
@@ -296,14 +299,15 @@ impl Store {
                 filter.user,
                 filter.source,
                 filter.from,
-                filter.to
+                filter.to,
+                filter.topic
             ];
             let total: i64 =
                 conn.query_row(&format!("SELECT COUNT(*) {WHERE}"), params, |row| {
                     row.get::<_, i64>(0)
                 })?;
             let mut stmt = conn.prepare(&format!(
-                "SELECT data {WHERE} ORDER BY start_ns DESC,id LIMIT ?9 OFFSET ?10"
+                "SELECT data {WHERE} ORDER BY start_ns DESC,id LIMIT ?10 OFFSET ?11"
             ))?;
             let traces = stmt
                 .query_map(
@@ -316,6 +320,7 @@ impl Store {
                         filter.source,
                         filter.from,
                         filter.to,
+                        filter.topic,
                         i64::try_from(limit)?,
                         i64::try_from(offset)?
                     ],

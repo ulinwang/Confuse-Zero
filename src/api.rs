@@ -101,7 +101,7 @@ impl Failure {
     pub(crate) fn missing() -> Self {
         Self(StatusCode::NOT_FOUND, "Resource not found".to_owned())
     }
-    fn unauthorized() -> Self {
+    pub(crate) fn unauthorized() -> Self {
         Self(
             StatusCode::UNAUTHORIZED,
             "Valid project credentials required".to_owned(),
@@ -117,6 +117,18 @@ async fn handle(State(store): State<Store>, request: Request) -> ApiResult<Respo
         return Ok(response(
             json!({"status":"OK","version":env!("CARGO_PKG_VERSION")}),
         ));
+    }
+    if let Some((format, route)) = path
+        .strip_prefix('/')
+        .and_then(|value| value.split_once("/v1/"))
+        && matches!(format, "openai" | "anthropic")
+    {
+        return crate::providers::gateway(&store, method, format, route, &parts.headers, body)
+            .await;
+    }
+    if let Some(grant) = path.strip_prefix("/media-object/") {
+        return crate::workspace_api::media_transfer(&store, &method, grant, &parts.headers, body)
+            .await;
     }
     let path = path
         .strip_prefix("/api/public/")
@@ -210,6 +222,9 @@ async fn dispatch(
         .collect::<Vec<_>>();
     if matches!(route.first(), Some(&"v2" | &"v3")) {
         route.remove(0);
+    }
+    if path == "v2/observations" && method == Method::GET {
+        return observations_v2(store, project, query).map(response);
     }
     let (page, limit, offset) = pagination(query)?;
     let data = match (method, route.as_slice()) {
@@ -309,12 +324,37 @@ async fn dispatch(
         (&Method::DELETE, ["scores", id]) => removed(store.delete_score(project, id)?)?,
         (&Method::POST, ["scores"]) => {
             let data = body_json(body, headers).await?;
+            if let Some(scores) = data.as_array() {
+                let mut accepted = 0;
+                let mut errors = Vec::new();
+                for score in scores {
+                    match store.put_score(project, score.clone()) {
+                        Ok(_) => accepted += 1,
+                        Err(error) => errors.push(json!({"message":error.to_string()})),
+                    }
+                }
+                if errors.is_empty() {
+                    return Ok(
+                        (StatusCode::ACCEPTED, Json(json!({"message":"Accepted"}))).into_response()
+                    );
+                }
+                return Ok((
+                    StatusCode::MULTI_STATUS,
+                    Json(json!({"accepted":accepted,"rejected":errors.len(),"errors":errors})),
+                )
+                    .into_response());
+            }
             let score = store
                 .put_score(project, data)
                 .map_err(|error| Failure::bad(error.to_string()))?;
             json!({"id":score["id"]})
         }
-        _ => return Err(Failure::missing()),
+        _ => {
+            return crate::workspace_api::dispatch(
+                store, project, method, &route, query, headers, body,
+            )
+            .await;
+        }
     };
     Ok(response(data))
 }
@@ -417,6 +457,7 @@ pub(crate) fn trace_filter(query: &Query) -> ApiResult<TraceFilter<'_>> {
         name: param(query, "name"),
         user: param(query, "userId"),
         source: param(query, "source"),
+        topic: param(query, "topicStableId"),
         from: time("fromTimestamp")?,
         to: time("toTimestamp")?,
     })
@@ -435,4 +476,179 @@ pub(crate) fn removed(exists: bool) -> ApiResult<Value> {
 
 pub(crate) fn response(data: Value) -> Response {
     Json(data).into_response()
+}
+
+fn observations_v2(store: &Store, project: &str, query: &Query) -> ApiResult<Value> {
+    if param(query, "parseIoAsJson") == Some("true") {
+        return Err(Failure::bad("parseIoAsJson is no longer supported"));
+    }
+    let limit = param(query, "limit")
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .ok()
+                .filter(|limit| (1..=1000).contains(limit))
+                .ok_or_else(|| Failure::bad("Invalid limit"))
+        })
+        .unwrap_or(Ok(50))?;
+    let offset = param(query, "cursor")
+        .map(|value| {
+            let bytes = STANDARD
+                .decode(value)
+                .map_err(|_| Failure::bad("Invalid cursor"))?;
+            let cursor = std::str::from_utf8(&bytes).map_err(|_| Failure::bad("Invalid cursor"))?;
+            let (scope, offset) = cursor
+                .rsplit_once(':')
+                .ok_or_else(|| Failure::bad("Invalid cursor"))?;
+            if scope != project {
+                return Err(Failure::bad("Invalid cursor"));
+            }
+            offset
+                .parse::<usize>()
+                .ok()
+                .filter(|offset| *offset <= i64::MAX as usize - limit)
+                .ok_or_else(|| Failure::bad("Invalid cursor"))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let structured = param(query, "filter")
+        .map(|v| {
+            serde_json::from_str::<Value>(v).map_err(|_| Failure::bad("Invalid observation filter"))
+        })
+        .transpose()?;
+    let kind = param(query, "type").map(str::to_ascii_uppercase);
+    let trace_id = structured
+        .as_ref()
+        .is_none()
+        .then(|| param(query, "traceId"))
+        .flatten();
+    let kind = structured
+        .as_ref()
+        .is_none()
+        .then_some(kind.as_deref())
+        .flatten();
+    let (rows, total) = store.observations(project, trace_id, kind, limit, offset)?;
+    let next = offset + rows.len();
+    let cursor = (next < total).then(|| STANDARD.encode(format!("{project}:{next}")));
+    let groups = param(query, "fields")
+        .unwrap_or("basic")
+        .split(',')
+        .collect::<Vec<_>>();
+    let parse_date = |key| {
+        param(query, key)
+            .map(|v| parse_time(&json!(v)).ok_or_else(|| Failure::bad(format!("Invalid {key}"))))
+            .transpose()
+    };
+    let from = parse_date("fromStartTime")?;
+    let to = parse_date("toStartTime")?;
+    let mut data = Vec::new();
+    for row in rows {
+        let mut all = row.public(project);
+        if let Some(trace) = store.trace(project, &row.trace_id)? {
+            all["userId"] = json!(trace.user_id);
+            all["sessionId"] = json!(trace.session_id);
+            all["traceName"] = json!(trace.name);
+            all["tags"] = json!(trace.tags);
+            all["release"] = json!(trace.release);
+            all["createdAt"] = json!(crate::model::iso(trace.received_ns));
+            all["updatedAt"] = all["createdAt"].clone();
+        }
+        all["isRootObservation"] = json!(row.parent_id.is_none());
+        if let Some(filter) = &structured {
+            if !crate::resources::matches_filters(&all, filter) {
+                continue;
+            }
+        } else {
+            if [
+                "name",
+                "userId",
+                "sessionId",
+                "version",
+                "environment",
+                "level",
+            ]
+            .iter()
+            .any(|key| param(query, key).is_some_and(|value| all[*key] != value))
+            {
+                continue;
+            }
+            if param(query, "parentObservationId").is_some_and(|value| {
+                if value.is_empty() {
+                    row.parent_id.is_some()
+                } else {
+                    row.parent_id.as_deref() != Some(value)
+                }
+            }) {
+                continue;
+            }
+            if param(query, "isRootObservation")
+                .is_some_and(|value| (value == "true") != row.parent_id.is_none())
+            {
+                continue;
+            }
+        }
+        if from.is_some_and(|time| row.start_ns < time)
+            || to.is_some_and(|time| row.start_ns >= time)
+        {
+            continue;
+        }
+        const GROUPS: &[(&str, &[&str])] = &[
+            (
+                "basic",
+                &[
+                    "name",
+                    "level",
+                    "statusMessage",
+                    "version",
+                    "environment",
+                    "bookmarked",
+                    "public",
+                    "userId",
+                    "sessionId",
+                    "isRootObservation",
+                ],
+            ),
+            ("time", &["completionStartTime", "createdAt", "updatedAt"]),
+            ("io", &["input", "output"]),
+            ("metadata", &["metadata"]),
+            ("model", &["model", "internalModelId", "modelParameters"]),
+            (
+                "usage",
+                &[
+                    "usageDetails",
+                    "costDetails",
+                    "totalCost",
+                    "usagePricingTierName",
+                ],
+            ),
+            ("prompt", &["promptId", "promptName", "promptVersion"]),
+            ("metrics", &["latency", "timeToFirstToken"]),
+            ("trace_context", &["tags", "release", "traceName"]),
+        ];
+        let mut output = serde_json::Map::new();
+        for key in [
+            "id",
+            "traceId",
+            "startTime",
+            "endTime",
+            "projectId",
+            "parentObservationId",
+            "type",
+        ]
+        .into_iter()
+        .chain(
+            GROUPS
+                .iter()
+                .filter(|(name, _)| groups.contains(name))
+                .flat_map(|(_, keys)| keys.iter().copied()),
+        ) {
+            let mut value = all.get(key).cloned().unwrap_or_default();
+            if matches!(key, "input" | "output") && !value.is_null() {
+                value = json!(value.to_string());
+            }
+            output.insert(key.to_owned(), value);
+        }
+        data.push(Value::Object(output));
+    }
+    Ok(json!({"data":data,"meta":{"cursor":cursor}}))
 }

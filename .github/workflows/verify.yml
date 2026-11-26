@@ -34,6 +34,14 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test
         run: cargo test --locked
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify official SDKs
+        run: cargo build --locked && ./scripts/verify-sdk.sh
   electron:
     runs-on: macos-26
     steps:
