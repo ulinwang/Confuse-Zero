@@ -1,0 +1,24 @@
+name: Verify
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify acceptance matrix
+        run: |
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+          with Path('docs/acceptance.tsv').open(newline='') as file:
+              rows = list(csv.DictReader(file, delimiter='\t'))
+          ids = [row['id'] for row in rows]
+          assert len(ids) == len(set(ids))
+          assert all(len(row) == 5 and all(row.values()) for row in rows)
+          assert {'DESKTOP', 'AGENT', 'SDK', 'OBS', 'MGMT', 'TOPICS', 'PKG'} <= {i.split('-')[0] for i in ids}
+          PY
