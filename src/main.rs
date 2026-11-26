@@ -11,6 +11,14 @@ fn main() -> Result<()> {
     let override_root = args.next().map(PathBuf::from);
     let data_dir = data_dir(override_root)?;
     match command.as_deref() {
+        Some("desktop") => {
+            let home = PathBuf::from(env::var_os("HOME").context("HOME is unavailable")?);
+            let store = Store::open(data_dir.join("confuse.sqlite"))?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            let result = runtime.block_on(confuse::desktop::run(store, home));
+            runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+            result?;
+        }
         Some("key") => {
             let store = Store::open(data_dir.join("confuse.sqlite"))?;
             println!(

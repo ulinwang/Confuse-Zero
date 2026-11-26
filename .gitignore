@@ -5,3 +5,7 @@
 *.dmg
 *.sqlite
 *.sqlite-*
+
+/desktop/node_modules/
+/desktop/build/
+/desktop/dist/

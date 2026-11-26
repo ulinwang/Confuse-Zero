@@ -1,0 +1,24 @@
+{
+  "name": "@confuse/desktop",
+  "productName": "Confuse Zero",
+  "version": "0.1.0",
+  "description": "Confuse desktop workspace",
+  "author": "Confuse-Zero contributors",
+  "private": true,
+  "license": "MIT",
+  "main": "main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "electron .",
+    "package": "node scripts/package.mjs",
+    "test": "node --test tests/*.test.cjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.0.1",
+    "electron": "45.5.0",
+    "esbuild": "0.28.1",
+    "lucide-react": "1.1.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  }
+}
