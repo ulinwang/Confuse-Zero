@@ -1,0 +1,7 @@
+/target/
+/dist/
+/.env
+**/.DS_Store
+*.dmg
+*.sqlite
+*.sqlite-*
