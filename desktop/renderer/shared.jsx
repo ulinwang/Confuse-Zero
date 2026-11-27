@@ -1,38 +1,44 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Activity, ArrowRight, X } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Root as DialogRoot } from "@radix-ui/react-dialog";
+import { Activity, ArrowRight } from "lucide-react";
+import { Dialog as LangfuseDialog } from "@/src/components/design-system/Dialog/Dialog";
+import { CodeSection } from "@/src/components/design-system/CodeSection/CodeSection";
 
 export const count = value => typeof value === "number" ? value.toLocaleString() : "—";
 export const time = value => value ? new Date(value).toLocaleString() : "—";
 export const duration = value => typeof value === "number" ? (value < 1 ? Math.round(value*1000)+" ms" : value.toFixed(2)+" s") : "—";
 
-export function useQuery(api, channel, payload, dependencies, initial) {
-  const [state, setState] = useState(initial);
-  const [error, setError] = useState("");
+export function useQuery(api, channel, payload, dependencies, initial, sameValue) {
+  const [result, setResult] = useState(null);
   useEffect(() => {
-    if (!channel) { setState(initial); setError(""); return; }
+    if (!channel) return;
     let current = true;
     api(channel, payload).then(value => {
-      if (current) { setState(value); setError(""); }
-    }, reason => { if (current) setError(reason.message); });
+      if (current) setResult(previous =>
+        previous?.api === api && previous.channel === channel && !previous.error && sameValue?.(previous.value, value)
+          ? previous : { api, channel, value, error: "" }
+      );
+    }, reason => {
+      if (current) setResult(previous => ({
+        api, channel,
+        value: previous?.api === api && previous.channel === channel ? previous.value : initial,
+        error: reason.message,
+      }));
+    });
     return () => { current = false; };
   }, [api, channel, ...dependencies]);
-  return [state, error];
+  return result?.api === api && result.channel === channel
+    ? [result.value, result.error, false]
+    : [initial, "", Boolean(channel)];
 }
 
 
 export function Dialog({ title, children, close, wide = false }) {
-  const dialog = useRef(null);
-  useEffect(() => {
-    dialog.current.showModal();
-    return () => { dialog.current?.close(); };
-  }, []);
-  return <dialog className={wide ? "dialog wide" : "dialog"} ref={dialog} onCancel={event => {
-    event.preventDefault();
-    close?.();
-  }}>
-    <div className="dialog-head"><h2>{title}</h2>{close && <button className="icon ghost" aria-label="Close" onClick={close}><X size={18}/></button>}</div>
-    {children}
-  </dialog>;
+  return <DialogRoot open onOpenChange={open => { if (!open) close?.(); }}>
+    <LangfuseDialog title={title} size={wide ? "md" : "default"} hideCloseButton requireExplicitClose={!close} noCapture>
+      <LangfuseDialog.Body>{children}</LangfuseDialog.Body>
+    </LangfuseDialog>
+  </DialogRoot>;
 }
 
 
@@ -44,6 +50,9 @@ export function Empty({ title, action, onAction }) {
 
 export function ValueBlock({ name, value }) {
   if (value==null) return null;
-  return <div className="value-block"><h4>{name}</h4><pre>{typeof value==="string" ? value : JSON.stringify(value,null,2)}</pre></div>;
+  const text = typeof value === "string";
+  return <div className="value-block">
+    <CodeSection title={name} content={text ? value : JSON.stringify(value, null, 2)} language={text ? undefined : "json"}/>
+  </div>;
 }
 

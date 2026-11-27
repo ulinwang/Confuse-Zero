@@ -1,6 +1,6 @@
 # Confuse
 
-Confuse runs on Apple Silicon macOS. The Electron desktop shell starts a Rust backend that stores Agent and Langfuse SDK telemetry in SQLite. Kimi Code, Codex, Claude Code, DeepSeek Harness, and Pi can be connected from the first-run dialog or Settings.
+Confuse runs on Apple Silicon macOS. The Electron desktop shell starts a Rust backend that stores Agent and Langfuse SDK telemetry in SQLite. The desktop renderer uses Langfuse v4.88.0 source components for navigation, tables, trace details and Topics. Kimi Code, Codex, Claude Code, DeepSeek Harness, and Pi can be connected from the first-run dialog or Settings. [Renderer source and license](desktop/renderer/langfuse/UPSTREAM.md)
 
 ## Install
 

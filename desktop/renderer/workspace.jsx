@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/src/components/ui/table";
+import { Tabs } from "@/src/components/design-system/Tabs/Tabs";
 import { ArrowRight, KeyRound, Plus, Trash2 } from "lucide-react";
 import { Dialog, Empty, ValueBlock, count, time, useQuery } from "./shared.jsx";
 
@@ -99,17 +101,17 @@ function Registry({ kind, api, tick, refresh, providers, choices=[], filters, de
   return <>
     <div className="section-heading registry-head">{label ? <h2>{label}</h2> : <div className="toolbar-spacer"/>}<button className="subtle" onClick={()=>setEditing({})}><Plus size={15}/> New {spec.singular}</button></div>
     {(fault||error) && <p className="error" role="alert">{fault||error}</p>}
-    <table className="data-table"><thead><tr><th>{kind.endsWith("-items")?"Entry":"Name"}</th>{versioned && <th>Version</th>}<th>Updated</th><th>{versioned?"Labels":"Status"}</th><th></th></tr></thead>
-      <tbody>{rows.map(row=><tr key={row.id}>
-        <td><button className="table-link" onClick={()=>onSelect ? onSelect(row) : setVersion(row)}>
+    <Table className="data-table"><TableHeader><TableRow><TableHead>{kind.endsWith("-items")?"Entry":"Name"}</TableHead>{versioned && <TableHead>Version</TableHead>}<TableHead>Updated</TableHead><TableHead>{versioned?"Labels":"Status"}</TableHead><TableHead></TableHead></TableRow></TableHeader>
+      <TableBody>{rows.map(row=><TableRow key={row.id}>
+        <TableCell><button className="table-link" onClick={()=>onSelect ? onSelect(row) : setVersion(row)}>
           {row.name || row.traceId || (typeof row.input==="string"?row.input:JSON.stringify(row.input)) || row.id}
-        </button></td>
-        {versioned && <td>{row.version}</td>}
-        <td>{time(row.updatedAt)}</td><td>{row.labels?.join(", ") || row.status || "—"}</td>
-        <td className="row-action"><button className="icon ghost" aria-label={"Edit "+spec.singular} onClick={()=>setEditing(row)}>Edit</button>
-          <button className="icon ghost" aria-label={"Delete "+spec.singular} onClick={()=>setRemoving(row)}><Trash2 size={15}/></button></td>
-      </tr>)}</tbody>
-    </table>
+        </button></TableCell>
+        {versioned && <TableCell>{row.version}</TableCell>}
+        <TableCell>{time(row.updatedAt)}</TableCell><TableCell>{row.labels?.join(", ") || row.status || "—"}</TableCell>
+        <TableCell className="row-action"><button className="icon ghost" aria-label={"Edit "+spec.singular} onClick={()=>setEditing(row)}>Edit</button>
+          <button className="icon ghost" aria-label={"Delete "+spec.singular} onClick={()=>setRemoving(row)}><Trash2 size={15}/></button></TableCell>
+      </TableRow>)}</TableBody>
+    </Table>
     {!rows.length && <Empty title={"No "+spec.singular+" records yet"}/>}
     {editing && <ResourceForm kind={kind} initial={editing} defaults={defaults} providers={providers} choices={choices} close={()=>setEditing(null)} save={save}/>}
     {removing && <Dialog title={"Delete "+spec.singular+"?"} close={()=>setRemoving(null)}>
@@ -193,9 +195,13 @@ function Evaluation({ api,tick,refresh,providers,openTrace }) {
   const [busy,setBusy]=useState(false);
 
   return <>
-    <div className="toolbar"><div className="tabs">
-      {["Evaluators","Experiments","Rules","Annotation queues","Score configurations"].map(label=><button key={label} aria-pressed={tab===label} onClick={()=>{setTab(label);setQueue(null);setExperiment(null);}}>{label}</button>)}
-    </div><div className="toolbar-spacer"></div>
+    <div className="toolbar">
+      <Tabs value={tab} onValueChange={value=>{setTab(value);setQueue(null);setExperiment(null);}}>
+        <Tabs.List aria-label="Evaluation views">
+          {["Evaluators","Experiments","Rules","Annotation queues","Score configurations"].map(label=><Tabs.Trigger key={label} value={label} label={label}/>)}
+        </Tabs.List>
+      </Tabs>
+      <div className="toolbar-spacer"></div>
       {tab==="Evaluators" && <button className="subtle" onClick={()=>setDialog("evaluate")}>Evaluate trace</button>}
       {tab==="Experiments" && <button className="subtle" onClick={()=>setDialog("experiment")}><Plus size={15}/> New experiment</button>}
     </div>
@@ -210,14 +216,14 @@ function Evaluation({ api,tick,refresh,providers,openTrace }) {
             onSelect={row=>row.traceId&&openTrace(row.traceId)}/></>
       : <Registry kind="annotation-queues" label="Queues" api={api} tick={tick} refresh={refresh} providers={providers} onSelect={setQueue}/>)}
     {tab==="Experiments" && <>
-      <table className="data-table"><thead><tr><th>Name</th><th>Status</th><th>Complete</th><th>Failed</th></tr></thead>
-        <tbody>{runs.map(row=><tr key={row.id}><td><button className="table-link" onClick={()=>setExperiment(row.id)}>{row.name}</button></td>
-          <td>{row.status}</td><td>{count(row.completed)}</td><td>{count(row.failed)}</td></tr>)}</tbody></table>
+      <Table className="data-table"><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Status</TableHead><TableHead>Complete</TableHead><TableHead>Failed</TableHead></TableRow></TableHeader>
+        <TableBody>{runs.map(row=><TableRow key={row.id}><TableCell><button className="table-link" onClick={()=>setExperiment(row.id)}>{row.name}</button></TableCell>
+          <TableCell>{row.status}</TableCell><TableCell>{count(row.completed)}</TableCell><TableCell>{count(row.failed)}</TableCell></TableRow>)}</TableBody></Table>
       {!runs.length && <Empty title="No experiments yet" action="New experiment" onAction={()=>setDialog("experiment")}/>}
       {experiment && <div className="workspace-form"><h2>Experiment items</h2>
-        <table className="data-table"><thead><tr><th>Item</th><th>Status</th><th>Trace</th></tr></thead>
-          <tbody>{items.map(row=><tr key={row.id}><td>{row.datasetItemId}</td><td>{row.status}</td>
-            <td>{row.traceId?<button className="table-link" onClick={()=>openTrace(row.traceId)}>{row.traceId}</button>:row.error}</td></tr>)}</tbody></table></div>}
+        <Table className="data-table"><TableHeader><TableRow><TableHead>Item</TableHead><TableHead>Status</TableHead><TableHead>Trace</TableHead></TableRow></TableHeader>
+          <TableBody>{items.map(row=><TableRow key={row.id}><TableCell>{row.datasetItemId}</TableCell><TableCell>{row.status}</TableCell>
+            <TableCell>{row.traceId?<button className="table-link" onClick={()=>openTrace(row.traceId)}>{row.traceId}</button>:row.error}</TableCell></TableRow>)}</TableBody></Table></div>}
     </>}
     {dialog && <Dialog title={dialog==="evaluate"?"Evaluate trace":"New experiment"} close={()=>setDialog("")}>
       <form onSubmit={async event=>{
@@ -255,8 +261,8 @@ function Dashboards({api,tick,refresh,providers}) {
     <Registry kind="alerts" label="Alerts" api={api} tick={tick} refresh={refresh} providers={providers}/>
     {chosen && <div className="workspace-form"><h2>{chosen.name}</h2>
       {error && <p className="error" role="alert">{error}</p>}
-      <table className="data-table"><thead><tr>{dimensions.map(row=><th key={row.field}>{row.field}</th>)}<th>{chosen.measure}</th></tr></thead>
-        <tbody>{data.data.map((row,index)=><tr key={index}>{dimensions.map(({field})=><td key={field}>{row[field]}</td>)}<td>{count(row[key])}</td></tr>)}</tbody></table>
+      <Table className="data-table"><TableHeader><TableRow>{dimensions.map(row=><TableHead key={row.field}>{row.field}</TableHead>)}<TableHead>{chosen.measure}</TableHead></TableRow></TableHeader>
+        <TableBody>{data.data.map((row,index)=><TableRow key={index}>{dimensions.map(({field})=><TableCell key={field}>{row[field]}</TableCell>)}<TableCell>{count(row[key])}</TableCell></TableRow>)}</TableBody></Table>
     </div>}
   </>;
 }
@@ -290,10 +296,10 @@ function Exports({ api,tick,refresh }) {
     </form>
     {result?.path && <p className="padded" role="status">{result.count} traces exported to {result.path}</p>}
     <div className="section-heading"><h2>Schedules</h2></div>
-    <table className="data-table"><thead><tr><th>Name</th><th>Directory</th><th>Interval</th><th></th></tr></thead>
-      <tbody>{schedules.map(row=><tr key={row.id}><td>{row.name}</td><td>{row.directory}</td><td>{row.intervalMinutes} min</td>
-        <td className="row-action"><button className="icon ghost" aria-label="Remove schedule" onClick={async()=>{await api("workspace.delete",{kind:"exports",id:row.id});refresh();}}><Trash2 size={15}/></button></td>
-      </tr>)}</tbody></table>
+    <Table className="data-table"><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Directory</TableHead><TableHead>Interval</TableHead><TableHead></TableHead></TableRow></TableHeader>
+      <TableBody>{schedules.map(row=><TableRow key={row.id}><TableCell>{row.name}</TableCell><TableCell>{row.directory}</TableCell><TableCell>{row.intervalMinutes} min</TableCell>
+        <TableCell className="row-action"><button className="icon ghost" aria-label="Remove schedule" onClick={async()=>{await api("workspace.delete",{kind:"exports",id:row.id});refresh();}}><Trash2 size={15}/></button></TableCell>
+      </TableRow>)}</TableBody></Table>
     {!schedules.length && <p className="muted padded">No scheduled exports</p>}
   </>;
 }
@@ -310,10 +316,10 @@ export function Workspace({ page, api, tick, refresh, navigate, openTrace, state
   if (page==="AI Gateway") return <>
     <div className="toolbar"><button className="subtle" onClick={()=>createKey("gateway")}><KeyRound size={15}/> Create gateway key</button>
       <button className="subtle" onClick={()=>navigate("Model connections")}>Model connections</button></div>
-    <table className="data-table"><thead><tr><th>Provider format</th><th>Gateway URL</th></tr></thead><tbody>
-      {["openai","anthropic"].map(format=><tr key={format}><td>{format}</td><td><button className="table-link" onClick={()=>
-        state?.sdkEndpoint&&api("desktop.copy",{text:state.sdkEndpoint+"/"+format+"/v1"})}>{state?.sdkEndpoint}/{format}/v1</button></td></tr>)}
-    </tbody></table>
+    <Table className="data-table"><TableHeader><TableRow><TableHead>Provider format</TableHead><TableHead>Gateway URL</TableHead></TableRow></TableHeader><TableBody>
+      {["openai","anthropic"].map(format=><TableRow key={format}><TableCell>{format}</TableCell><TableCell><button className="table-link" onClick={()=>
+        state?.sdkEndpoint&&api("desktop.copy",{text:state.sdkEndpoint+"/"+format+"/v1"})}>{state?.sdkEndpoint}/{format}/v1</button></TableCell></TableRow>)}
+    </TableBody></Table>
   </>;
   const kind={Prompts:"prompts",Skills:"skills","Model connections":"llm-connections"}[page];
   return <Registry kind={kind} {...common}/>;
