@@ -6,12 +6,13 @@ use crate::{
     topic_cluster::{TopicClusteringSettings, cluster_topic_embeddings},
 };
 use anyhow::{Context, Result, bail};
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::Duration,
 };
+use uuid::Uuid;
 
 pub const FACETS: [(&str, &str, &str); 4] = [
     (
@@ -99,14 +100,6 @@ pub fn save(store: &Store, project: &str, mut map: Value) -> Result<Value> {
     {
         bail!("Select at least one built-in facet");
     }
-    if let Some(id) = map["id"].as_str() {
-        let old = store
-            .resource(project, "topic-maps", id)?
-            .context("Map not found")?;
-        if old["mode"] == "snapshot" {
-            bail!("Create a new snapshot to change its selection");
-        }
-    }
     map["sample"] = json!(sample);
     map["dimensions"] = json!(dimensions);
     map["readinessSeconds"] = json!(readiness);
@@ -115,27 +108,70 @@ pub fn save(store: &Store, project: &str, mut map: Value) -> Result<Value> {
     map["refresh"] = json!(true);
     map["nextRunNs"] = json!(0);
     map["error"] = Value::Null;
+    map["processingId"] = Value::Null;
+    if let Some(id) = map["id"].as_str() {
+        return store.transaction(|tx| {
+            let mut current = load_map(tx, project, id)?.context("Map not found")?;
+            if current["mode"] == "snapshot" {
+                bail!("Create a new snapshot to change its selection");
+            }
+            current
+                .as_object_mut()
+                .context("Invalid Topics map")?
+                .extend(map.as_object().context("Invalid map settings")?.clone());
+            update_map(tx, project, id, &mut current)?;
+            Ok(current)
+        });
+    }
     store.put_resource(project, "topic-maps", map)
 }
 
 pub fn change(store: &Store, project: &str, id: &str, action: &str) -> Result<Value> {
-    let mut map = store
-        .resource(project, "topic-maps", id)?
-        .context("Map not found")?;
-    match action {
-        "pause" if map["mode"] == "live" => {
-            map["enabled"] = json!(false);
-            map["status"] = json!("Paused");
+    store.transaction(|tx| {
+        let mut map = load_map(tx, project, id)?.context("Map not found")?;
+        match action {
+            "pause" if map["mode"] == "live" => {
+                map["enabled"] = json!(false);
+                map["status"] = json!("Paused");
+            }
+            "refresh" | "resume" if map["mode"] == "live" || map["status"] == "Failed" => {
+                map["enabled"] = json!(true);
+                map["status"] = json!("Queued");
+                map["refresh"] = json!(true);
+                map["nextRunNs"] = json!(0);
+            }
+            _ => bail!("This action is unavailable for the map"),
         }
-        "refresh" | "resume" if map["mode"] == "live" || map["status"] == "Failed" => {
-            map["enabled"] = json!(true);
-            map["status"] = json!("Queued");
-            map["refresh"] = json!(true);
-            map["nextRunNs"] = json!(0);
-        }
-        _ => bail!("This action is unavailable for the map"),
-    }
-    store.put_resource(project, "topic-maps", map)
+        map["processingId"] = Value::Null;
+        map["error"] = Value::Null;
+        update_map(tx, project, id, &mut map)?;
+        Ok(map)
+    })
+}
+
+fn load_map(tx: &Transaction<'_>, project: &str, id: &str) -> Result<Option<Value>> {
+    let raw: Option<String> = tx
+        .query_row(
+            "SELECT data FROM resources WHERE project=?1 AND kind='topic-maps' AND id=?2",
+            params![project, id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    raw.as_deref().map(decode).transpose()
+}
+
+fn update_map(tx: &Transaction<'_>, project: &str, id: &str, map: &mut Value) -> Result<()> {
+    map["updatedAt"] = json!(iso(now_ns()));
+    tx.execute(
+        "UPDATE resources SET name=?3,data=?4 WHERE project=?1 AND kind='topic-maps' AND id=?2",
+        params![
+            project,
+            id,
+            map["name"].as_str().unwrap_or_default(),
+            map.to_string()
+        ],
+    )?;
+    Ok(())
 }
 
 pub fn delete(store: &Store, project: &str, id: &str) -> Result<bool> {
@@ -170,79 +206,110 @@ pub async fn worker(store: Store) {
             };
             for map in maps {
                 let now = now_ns();
-                let next = map["nextRunNs"].as_i64().unwrap_or_default();
-                let due = map["enabled"] == true
-                    && map["status"] != "Failed"
-                    && ((map["refresh"] == true && now >= next)
-                        || map["status"] == "Processing"
-                        || (map["mode"] == "live" && now >= next));
-                if due {
-                    let id = map["id"].as_str().unwrap_or_default();
-                    if process(&store, &project.id, map.clone(), now)
-                        .await
-                        .is_err()
-                    {
-                        let _=store.put_resource(&project.id,"topic-maps",json!({"id":id,"status":"Failed",
-                            "refresh":false,"error":"Topics processing failed. Check model connections and retry."}));
-                        let _ = store.notify(
-                            &project.id,
-                            "Topics",
-                            "Map processing failed",
-                            "warning",
-                            Some(id),
-                            true,
-                        );
-                    }
+                if due(&map, now) {
+                    let _ = process(&store, &project.id, map, now).await;
                 }
             }
         }
     }
 }
 
+fn due(map: &Value, now: i64) -> bool {
+    let next = map["nextRunNs"].as_i64().unwrap_or_default();
+    map["enabled"] == true
+        && map["status"] != "Failed"
+        && (map["status"] == "Processing"
+            || (now >= next && (map["refresh"] == true || map["mode"] == "live")))
+}
+
 pub async fn process(store: &Store, project: &str, map: Value, now: i64) -> Result<Value> {
     let id = map["id"].as_str().context("Map ID required")?;
-    let result = fit_map(store, project, &map, now).await;
-    match result {
-        Ok((status, count)) => {
-            let live = map["mode"] == "live";
-            let pending_sample = live && status == "Insufficient data";
-            store.put_resource(project,"topic-maps",json!({"id":id,"status":status,"error":null,
-                "lastRunNs":now,"refresh":pending_sample,"nextRunNs":if pending_sample{now+30*NANOS}else{now+DAY}}))?;
-            let run = store.put_resource(
-                project,
-                "topic-runs",
-                json!({"mapId":id,"status":status,"traceCount":count,"finishedAt":iso(now)}),
-            )?;
-            if !pending_sample {
-                store.notify(
-                    project,
-                    "Topics",
-                    &format!("{} · {status}", map["name"].as_str().unwrap_or_default()),
-                    "success",
-                    Some(id),
-                    true,
-                )?;
+    let processing_id = Uuid::new_v4().to_string();
+    let Some(map) = store.transaction(|tx| {
+        let Some(mut current) = load_map(tx, project, id)?.filter(|map| due(map, now)) else {
+            return Ok(None);
+        };
+        current["processingId"] = json!(processing_id);
+        current["status"] = json!("Processing");
+        update_map(tx, project, id, &mut current)?;
+        Ok(Some(current))
+    })?
+    else {
+        return Ok(Value::Null);
+    };
+
+    let fit = fit_map(store, project, &map, now, &processing_id).await;
+    let run = store.transaction(|tx| {
+        let Some(mut current) =
+            load_map(tx, project, id)?.filter(|map| map["processingId"] == processing_id)
+        else {
+            return Ok(None);
+        };
+        let (status, error) = match &fit {
+            Ok(output) if output.facets.is_empty() => ("Insufficient data", None),
+            Ok(output) => {
+                publish(tx, project, id, &output.facets, now)?;
+                ("Complete", None)
             }
-            Ok(run)
+            Err(error) => ("Failed", Some(error.to_string())),
+        };
+        let pending_sample = current["mode"] == "live" && status == "Insufficient data";
+        current["status"] = json!(status);
+        current["error"] = json!(error);
+        current["processingId"] = Value::Null;
+        current["refresh"] = json!(pending_sample);
+        if fit.is_ok() {
+            current["lastRunNs"] = json!(now);
+            current["nextRunNs"] = json!(now + if pending_sample { 30 * NANOS } else { DAY });
         }
-        Err(error) => {
-            store.put_resource(
-                project,
-                "topic-maps",
-                json!({"id":id,"status":"Failed","refresh":false,"error":error.to_string()}),
-            )?;
-            store.put_resource(project,"topic-runs",json!({"mapId":id,"status":"Failed","error":error.to_string(),"finishedAt":iso(now)}))?;
-            store.notify(
+        update_map(tx, project, id, &mut current)?;
+        let finished = iso(now);
+        let run = json!({"id":processing_id,"projectId":project,"mapId":id,"status":status,
+            "traceCount":fit.as_ref().ok().map(|output|output.trace_count),"error":error,
+            "finishedAt":finished,"createdAt":finished,"updatedAt":finished});
+        tx.execute(
+            "INSERT INTO resources(project,kind,id,name,created_ns,data) VALUES(?1,'topic-runs',?2,'',?3,?4)",
+            params![project, processing_id, now, run.to_string()],
+        )?;
+        if !pending_sample {
+            let name = current["name"].as_str().unwrap_or_default();
+            Store::write_notification(
+                tx,
                 project,
                 "Topics",
-                "Map processing failed",
-                "warning",
+                &format!("{name} · {status}"),
+                if fit.is_ok() { "success" } else { "warning" },
                 Some(id),
                 true,
             )?;
-            Err(error)
         }
+        Ok(Some(run))
+    })?;
+    match run {
+        Some(run) => fit.map(|_| run),
+        None => Ok(Value::Null),
     }
+}
+
+#[derive(Default)]
+struct MapFit {
+    trace_count: usize,
+    facets: Vec<Value>,
+}
+
+fn check_run(store: &Store, project: &str, id: &str, processing_id: &str) -> Result<()> {
+    let current = store.access(|conn| {
+        Ok(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM resources WHERE project=?1 AND kind='topic-maps'
+             AND id=?2 AND json_extract(data,'$.processingId')=?3)",
+            params![project, id, processing_id],
+            |row| row.get::<_, bool>(0),
+        )?)
+    })?;
+    if !current {
+        bail!("Topics run was cancelled");
+    }
+    Ok(())
 }
 
 async fn fit_map(
@@ -250,7 +317,8 @@ async fn fit_map(
     project: &str,
     map: &Value,
     now: i64,
-) -> Result<(&'static str, usize)> {
+    processing_id: &str,
+) -> Result<MapFit> {
     let id = map["id"].as_str().context("Map ID required")?;
     let provider = |key: &str| {
         store.provider(
@@ -263,15 +331,13 @@ async fn fit_map(
     let naming = provider("namingProvider")?;
     let dimensions = map["dimensions"].as_u64().unwrap_or(1024) as usize;
     let traces = select(store, project, map, now)?;
-    let count = traces.len();
-    if count < MINIMUM {
-        return Ok(("Insufficient data", count));
+    let mut fit = MapFit {
+        trace_count: traces.len(),
+        ..MapFit::default()
+    };
+    if fit.trace_count < MINIMUM {
+        return Ok(fit);
     }
-    store.put_resource(
-        project,
-        "topic-maps",
-        json!({"id":id,"status":"Processing"}),
-    )?;
     let mut observations = BTreeMap::new();
     for trace in traces {
         let (rows, _) = store.observations(project, Some(&trace.id), Some("GENERATION"), 512, 0)?;
@@ -288,7 +354,8 @@ async fn fit_map(
         );
     }
     if observations.len() < MINIMUM {
-        return Ok(("Insufficient data", observations.len()));
+        fit.trace_count = observations.len();
+        return Ok(fit);
     }
     let signature = stable_id(
         &[
@@ -303,13 +370,13 @@ async fn fit_map(
         16,
     );
     let facet_ids = string_list(&map["facetIds"]);
-    let mut results = Vec::new();
     for (facet, _, instruction) in FACETS {
         if !facet_ids.iter().any(|id| id == facet) {
             continue;
         }
         let mut summaries = Vec::new();
         for (trace, content) in observations.values() {
+            check_run(store, project, id, processing_id)?;
             if let Some(item) = prepare(
                 store,
                 project,
@@ -334,7 +401,7 @@ async fn fit_map(
             .iter()
             .map(|item| item.embedding.clone())
             .collect();
-        let fit = tokio::task::spawn_blocking(move || {
+        let clusters = tokio::task::spawn_blocking(move || {
             cluster_topic_embeddings(
                 vectors,
                 TopicClusteringSettings {
@@ -346,7 +413,7 @@ async fn fit_map(
         })
         .await??;
         let mut groups: BTreeMap<i32, Vec<&Summary>> = BTreeMap::new();
-        for (item, &label) in summaries.iter().zip(&fit.labels) {
+        for (item, &label) in summaries.iter().zip(&clusters.labels) {
             if label >= 0 {
                 groups.entry(label).or_default().push(item);
             }
@@ -393,6 +460,7 @@ async fn fit_map(
                 claimed.insert(row["stableId"].as_str().unwrap_or_default().to_owned());
                 row
             } else {
+                check_run(store, project, id, processing_id)?;
                 let examples = items
                     .iter()
                     .take(20)
@@ -418,17 +486,14 @@ async fn fit_map(
             );
             topics.push(topic);
         }
-        let assignments=summaries.into_iter().zip(fit.labels).zip(fit.coordinates)
+        let assignments=summaries.into_iter().zip(clusters.labels).zip(clusters.coordinates)
             .map(|((item,label),coordinates)|json!({"traceId":item.trace,"facetId":facet,"ruleId":id,
                 "topicStableId":labels.get(&label),"summary":item.text,"x":coordinates[0],"y":coordinates[1]}))
             .collect::<Vec<_>>();
-        results.push(json!({"facetId":facet,"topics":topics,"assignments":assignments}));
+        fit.facets
+            .push(json!({"facetId":facet,"topics":topics,"assignments":assignments}));
     }
-    if results.is_empty() {
-        return Ok(("Insufficient data", count));
-    }
-    publish(store, project, id, &results, now)?;
-    Ok(("Complete", count))
+    Ok(fit)
 }
 
 struct Summary {
@@ -525,28 +590,32 @@ fn select(store: &Store, project: &str, map: &Value, now: i64) -> Result<Vec<Tra
     Ok(result)
 }
 
-fn publish(store: &Store, project: &str, map: &str, results: &[Value], now: i64) -> Result<()> {
-    store.transaction(|tx|{
-        let active:bool=tx.query_row("SELECT json_extract(data,'$.enabled') FROM resources WHERE project=?1 AND kind='topic-maps' AND id=?2",
-            params![project,map],|row|row.get(0)).optional()?.unwrap_or(false);
-        if !active {bail!("Topics map is no longer enabled");}
-        tx.execute("DELETE FROM topic_assignments WHERE project=?1 AND map=?2",params![project,map])?;
-        let mut topics=Vec::new();
-        for result in results {
-            topics.extend(result["topics"].as_array().into_iter().flatten().cloned());
-            for row in result["assignments"].as_array().into_iter().flatten() {
-                tx.execute("INSERT INTO topic_assignments(project,map,facet,trace,topic,summary,x,y)
+fn publish(
+    tx: &Transaction<'_>,
+    project: &str,
+    map: &str,
+    results: &[Value],
+    now: i64,
+) -> Result<()> {
+    tx.execute(
+        "DELETE FROM topic_assignments WHERE project=?1 AND map=?2",
+        params![project, map],
+    )?;
+    let mut topics = Vec::new();
+    for result in results {
+        topics.extend(result["topics"].as_array().into_iter().flatten().cloned());
+        for row in result["assignments"].as_array().into_iter().flatten() {
+            tx.execute("INSERT INTO topic_assignments(project,map,facet,trace,topic,summary,x,y)
                     SELECT ?1,?2,?3,?4,?5,?6,?7,?8 WHERE EXISTS(SELECT 1 FROM traces WHERE project=?1 AND id=?4)",
                     params![project,map,row["facetId"].as_str(),row["traceId"].as_str(),row["topicStableId"].as_str(),
                         row["summary"].as_str(),row["x"].as_f64(),row["y"].as_f64()])?;
-            }
         }
-        let data=json!({"id":map,"mapId":map,"createdAt":iso(now),"topics":topics});
-        tx.execute("INSERT INTO resources(project,kind,id,name,created_ns,data) VALUES(?1,'topic-publications',?2,'',?3,?4)
+    }
+    let data = json!({"id":map,"mapId":map,"createdAt":iso(now),"topics":topics});
+    tx.execute("INSERT INTO resources(project,kind,id,name,created_ns,data) VALUES(?1,'topic-publications',?2,'',?3,?4)
             ON CONFLICT(project,kind,id) DO UPDATE SET data=excluded.data,created_ns=excluded.created_ns",
             params![project,map,now,data.to_string()])?;
-        Ok(())
-    })
+    Ok(())
 }
 
 pub fn result(store: &Store, project: &str, map: &str, facet: Option<&str>) -> Result<Value> {

@@ -13,11 +13,14 @@ use confuse::{
     topics,
 };
 use serde_json::{Value, json};
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Notify, time::timeout};
 use tower::ServiceExt;
 
 const NOW: i64 = 1_790_000_000_000_000_000;
@@ -27,6 +30,10 @@ struct Calls {
     summary: AtomicUsize,
     embed: AtomicUsize,
     naming: AtomicUsize,
+    block_next_embedding: AtomicBool,
+    bad_embedding: AtomicBool,
+    embedding_started: Notify,
+    release_embedding: Notify,
 }
 
 async fn complete(State(calls): State<Arc<Calls>>, Json(body): Json<Value>) -> Json<Value> {
@@ -51,6 +58,13 @@ async fn complete(State(calls): State<Arc<Calls>>, Json(body): Json<Value>) -> J
 
 async fn embeddings(State(calls): State<Arc<Calls>>, Json(body): Json<Value>) -> Json<Value> {
     calls.embed.fetch_add(1, Ordering::Relaxed);
+    if calls.block_next_embedding.swap(false, Ordering::Relaxed) {
+        calls.embedding_started.notify_one();
+        calls.release_embedding.notified().await;
+    }
+    if calls.bad_embedding.swap(false, Ordering::Relaxed) {
+        return Json(json!({"data":[{"embedding":[1.0]}]}));
+    }
     let summary = body["input"].as_str().unwrap_or_default();
     let dimension = body["dimensions"].as_u64().unwrap_or(64) as usize;
     let mut vector = vec![0.01; dimension];
@@ -248,6 +262,132 @@ async fn topics_runs_local_models_keeps_snapshots_and_resolves_project_scoped_re
             .unwrap()
             .1,
         24
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn topics_records_one_failure_retries_and_respects_pause_and_removal() {
+    let project = DEFAULT_PROJECT;
+    let store = Store::memory().unwrap();
+    let calls = Arc::new(Calls::default());
+    let server = Router::new()
+        .route("/v1/chat/completions", post(complete))
+        .route("/v1/embeddings", post(embeddings))
+        .with_state(calls.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+    let provider = store.configure_provider(project,json!({
+        "name":"fixture","model":"summary","embeddingModel":"vector","format":"openai","baseUrl":format!("http://{address}/v1")
+    })).unwrap();
+    let new_map =
+        |name, facet| {
+            topics::save(&store, project, json!({
+            "name":name,"mode":"live","facetIds":[facet],"summaryProvider":provider["id"],
+            "embeddingProvider":provider["id"],"namingProvider":provider["id"],"dimensions":64
+        })).unwrap()
+        };
+    let live = new_map("Live", "intent");
+    let id = live["id"].as_str().unwrap();
+    let empty = topics::process(&store, project, live.clone(), NOW)
+        .await
+        .unwrap();
+    assert_eq!(empty["status"], "Insufficient data");
+    assert!(store.notifications(project).unwrap().is_empty());
+    assert!(
+        topics::process(&store, project, live.clone(), NOW + 1)
+            .await
+            .unwrap()
+            .is_null()
+    );
+    let traces: Vec<_> = (1..=24).map(|index| trace(index, 600)).collect();
+    store.ingest(project, &traces).unwrap();
+
+    let start = NOW + 30_000_000_000;
+    let start_blocked = |map: Value| {
+        calls.block_next_embedding.store(true, Ordering::Relaxed);
+        let store = store.clone();
+        tokio::spawn(async move { topics::process(&store, project, map, start).await })
+    };
+    let pending = start_blocked(live.clone());
+    timeout(Duration::from_secs(5), calls.embedding_started.notified())
+        .await
+        .unwrap();
+    assert_eq!(
+        topics::change(&store, project, id, "pause").unwrap()["status"],
+        "Paused"
+    );
+    calls.release_embedding.notify_one();
+    assert!(pending.await.unwrap().unwrap().is_null());
+    assert_eq!(
+        store.resource(project, "topic-maps", id).unwrap().unwrap()["status"],
+        "Paused"
+    );
+    assert_eq!(store.resources(project, "topic-runs").unwrap().len(), 1);
+    assert_eq!(calls.embed.load(Ordering::Relaxed), 1);
+
+    let queued = topics::change(&store, project, id, "resume").unwrap();
+    calls.bad_embedding.store(true, Ordering::Relaxed);
+    let error = topics::process(&store, project, queued, start)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("expected 64"));
+    let failed = store.resource(project, "topic-maps", id).unwrap().unwrap();
+    assert_eq!(failed["status"], "Failed");
+    assert_eq!(store.notifications(project).unwrap().len(), 1);
+    assert!(
+        topics::process(&store, project, failed, start)
+            .await
+            .unwrap()
+            .is_null()
+    );
+    let queued = topics::change(&store, project, id, "refresh").unwrap();
+    let completed = topics::process(&store, project, queued, start)
+        .await
+        .unwrap();
+    assert_eq!(completed["status"], "Complete");
+    let summary_calls = calls.summary.load(Ordering::Relaxed);
+    let next = start + 86_400_000_000_000;
+    assert!(
+        topics::process(&store, project, live.clone(), next - 1)
+            .await
+            .unwrap()
+            .is_null()
+    );
+    assert_eq!(
+        topics::process(&store, project, live, next).await.unwrap()["status"],
+        "Complete"
+    );
+    assert_eq!(calls.summary.load(Ordering::Relaxed), summary_calls);
+
+    let removed = new_map("Removed", "sentiment");
+    let removed_id = removed["id"].as_str().unwrap().to_owned();
+    let pending = start_blocked(removed);
+    timeout(Duration::from_secs(5), calls.embedding_started.notified())
+        .await
+        .unwrap();
+    assert!(topics::delete(&store, project, &removed_id).unwrap());
+    calls.release_embedding.notify_one();
+    assert!(pending.await.unwrap().unwrap().is_null());
+    assert!(
+        store
+            .resource(project, "topic-maps", &removed_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .resources(project, "topic-runs")
+            .unwrap()
+            .iter()
+            .all(|run| run["mapId"] != removed_id)
+    );
+    assert!(
+        store
+            .resource(project, "topic-publications", &removed_id)
+            .unwrap()
+            .is_none()
     );
     server.abort();
 }
