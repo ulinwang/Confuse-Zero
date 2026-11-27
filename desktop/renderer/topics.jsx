@@ -93,7 +93,7 @@ export function Topics({ api, tick, refresh, openTrace, filterByTopic, navigate 
         </div>
       </div>
       {topic?.description && <p className="muted topic-description">{topic.description}</p>}
-      {data.assignments.length>0 && <input aria-label="Search topic traces" placeholder="Search summaries or Trace ID" value={search} onChange={event=>setSearch(event.target.value)}/>}
+      {data.assignments.length>0 && <input aria-label="Search topic traces" placeholder="Search topic traces" value={search} onChange={event=>setSearch(event.target.value)}/>}
       <table className="data-table topic-traces"><thead><tr><th>Summary</th><th>Trace ID</th></tr></thead>
         <tbody>{shown.slice(0,100).map(row=><tr key={row.traceId}>
           <td>{row.summary}</td><td><button className="table-link" onClick={()=>openTrace(row.traceId)}>{row.traceId}</button></td>
