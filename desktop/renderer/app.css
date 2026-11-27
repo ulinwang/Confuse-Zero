@@ -18,6 +18,8 @@
 :root.dark { color-scheme: dark; }
 *,*::before,*::after { box-sizing:border-box; }
 body { margin:0;color:var(--text);background:var(--workspace); }
+/* Langfuse's overlay provider appends its portal containers after the app root. */
+#app { isolation:isolate; }
 button, input, select, textarea { font:inherit; }
 button { cursor:pointer;color:inherit;border:0;background:transparent; }
 button:disabled, input:disabled { cursor:default;opacity:.47; }
@@ -42,7 +44,7 @@ svg { flex:none; }
 .ghost:hover,.menu button:hover,.menu button:focus-visible { background:var(--hover);color:var(--text); }
 .sidebar-bottom { margin-top:auto;display:grid;gap:3px;padding-top:20px; }
 .unread { margin-left:auto;min-width:21px;text-align:center;padding:2px 5px;border-radius:10px;background:var(--desktop-accent);color:var(--on-accent);font-size:11px; }
-.main { flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;overflow:auto; }
+.main { flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;overflow:auto;isolation:isolate; }
 .content { padding:22px 40px 42px; }
 .heading,.heading-left,.section-heading,.trace-title,.actions,.toolbar,.inline-form { display:flex;align-items:center;gap:12px; }
 .heading,.section-heading,.trace-title { justify-content:space-between; }
