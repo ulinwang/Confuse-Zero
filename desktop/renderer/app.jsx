@@ -34,6 +34,11 @@ function App() {
   const [topic, setTopic] = useState(null);
   const [trace, setTrace] = useState(null);
   const [sdkKey, setSdkKey] = useState(null);
+  const projectToggle = useRef(null);
+  const closeProjectMenu = useCallback((restoreFocus = false) => {
+    setProjectMenu(false);
+    if (restoreFocus) projectToggle.current?.focus();
+  }, []);
   const [notices] = useQuery(
     useCallback((channel, payload) => window.confuse.invoke(channel, { ...payload, project }), [project]),
     "notifications.list", {}, [tick], []
@@ -103,11 +108,11 @@ function App() {
         <div className="titlebar"></div>
         <div className="wordmark"><span className="mark"><Database size={16}/></span> Confuse</div>
         <div className="project">
-          <button className="project-toggle" aria-expanded={projectMenu} onClick={() => setProjectMenu(!projectMenu)}>
+          <button ref={projectToggle} className="project-toggle" aria-expanded={projectMenu} onClick={() => setProjectMenu(!projectMenu)}>
             <span>{name}</span><ChevronDown size={14}/>
           </button>
           {projectMenu && <ProjectMenu projects={state?.projects || []}
-            selected={project} close={() => setProjectMenu(false)} select={id => { setProject(id); navigate("Overview"); }}
+            selected={project} close={closeProjectMenu} select={id => { setProject(id); navigate("Overview"); }}
             create={() => { setProjectMenu(false); setForm("project"); }}
             showKeys={() => navigate("Settings")} copy={() => state?.sdkEndpoint && api("desktop.copy", { text:state.sdkEndpoint })}/>}
         </div>
@@ -193,10 +198,19 @@ function ProjectMenu({ projects, selected, select, create, showKeys, copy, close
   const anchor = useRef(null);
   const menu = useRef(null);
   function cancel() { clearTimeout(timer.current); }
-  function enter() { cancel(); anchor.current = null; timer.current=setTimeout(()=>setOpen(true),150); }
+  function enter() {
+    cancel();
+    anchor.current = null;
+    if (!open) timer.current = setTimeout(() => setOpen(true), 150);
+  }
   function leave(event) {
     cancel();
-    anchor.current = {x:event.clientX,y:event.clientY};
+    if (!open) return;
+    const rect = parent.current.getBoundingClientRect();
+    anchor.current = {
+      x: Math.max(rect.left, Math.min(rect.right, event.clientX)),
+      y: Math.max(rect.top, Math.min(rect.bottom, event.clientY)),
+    };
     timer.current=setTimeout(()=>setOpen(false),300);
   }
   useEffect(() => {
@@ -217,7 +231,7 @@ function ProjectMenu({ projects, selected, select, create, showKeys, copy, close
     return () => { cancel(); document.removeEventListener("pointermove",pointer); document.removeEventListener("pointerdown",outside); };
   }, [open, close]);
   return <div className="menu" ref={menu} onKeyDown={event => {
-    if (event.key === "Escape") {event.stopPropagation();close();}
+    if (event.key === "Escape") {event.stopPropagation();close(true);}
   }}>
     {projects.map(p => <button key={p.id} onClick={() => select(p.id)}>{p.name}{selected===p.id && <Check size={14}/>}</button>)}
     <button onClick={create}>New project<Plus size={14}/></button>
@@ -229,7 +243,7 @@ function ProjectMenu({ projects, selected, select, create, showKeys, copy, close
       {open && <div className="menu sub-menu" ref={submenu} onPointerEnter={cancel} onKeyDown={event => {
         if(event.key==="ArrowLeft"){event.preventDefault();setOpen(false);parent.current?.focus();}
       }}>
-        <button onClick={()=>{copy();close();}}>Copy endpoint</button>
+        <button onClick={()=>{copy();close(true);}}>Copy endpoint</button>
         <button onClick={showKeys}>API keys<KeyRound size={14}/></button>
       </div>}
     </div>

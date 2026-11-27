@@ -9,7 +9,7 @@ export function Topics({ api, tick, refresh, openTrace, filterByTopic, navigate 
   const [state,error] = useQuery(api,"topics.list",{},[tick],{maps:[],facets:[]});
   const [providers] = useQuery(api,"workspace.list",{kind:"llm-connections"},[tick],[]);
   const [selected,setSelected] = useState("");
-  const [facet,setFacet] = useState("intent");
+  const [requestedFacet,setFacet] = useState("intent");
   const [chart,setChart] = useState("treemap");
   const [zoom,setZoom] = useState(1);
   const [activeTopic,setActiveTopic] = useState("");
@@ -20,7 +20,10 @@ export function Topics({ api, tick, refresh, openTrace, filterByTopic, navigate 
   const [pending,setPending] = useState(false);
   const active = state.maps.find(map=>map.id===selected) || state.maps[0];
   const id = active?.id;
-  const [data,resultError] = useQuery(api,id ? "topics.result" : null,{id,facet},[id,facet,tick],blank);
+  const facet = active?.facetIds.includes(requestedFacet) ? requestedFacet : active?.facetIds[0];
+  const [result,resultError] = useQuery(api,id && facet ? "topics.result" : null,{id,facet},[id,facet,tick],blank);
+  const firstAssignment = result.assignments[0];
+  const data = firstAssignment && (firstAssignment.ruleId !== id || firstAssignment.facetId !== facet) ? blank : result;
   const [runs] = useQuery(api,history && id ? "topics.history" : null,{id},[history,id,tick],[]);
   useEffect(()=> { setActiveTopic(""); },[id,facet]);
 
