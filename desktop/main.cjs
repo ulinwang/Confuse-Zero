@@ -10,6 +10,7 @@ const channels = require("./channels.cjs");
 
 const ui = "confuse-ui://workspace";
 const renderer = path.join(__dirname, "build");
+const assets = new Set(["index.html", "app.js", "app.css", "desktop.css", "langfuse.css"]);
 const data = path.resolve(process.env.CONFUSE_DATA_DIR || path.join(app.getPath("appData"), "Confuse-Zero"));
 const userData = path.join(data, "Desktop");
 mkdirSync(userData, { recursive: true, mode: 0o700 });
@@ -140,8 +141,8 @@ function installMenu() {
 function setup() {
   protocol.handle("confuse-ui", request => {
     const url = new URL(request.url);
-    const requested = { "/index.html":"index.html", "/app.js":"app.js", "/app.css":"app.css" }[url.pathname];
-    if (url.hostname !== "workspace" || !requested || !existsSync(path.join(renderer, requested))) return new Response("Not found", { status: 404 });
+    const requested = url.pathname.slice(1);
+    if (url.hostname !== "workspace" || !assets.has(requested) || !existsSync(path.join(renderer, requested))) return new Response("Not found", { status: 404 });
     return net.fetch(pathToFileURL(path.join(renderer, requested)).href);
   });
   const executable = app.isPackaged ? path.join(process.resourcesPath, "confuse-backend")

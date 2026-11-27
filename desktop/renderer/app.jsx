@@ -1,22 +1,38 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/src/components/ui/table";
 import { createRoot } from "react-dom/client";
 import {
-  Activity, ArrowDownRight, ArrowLeft, ArrowRight, Bell, Check, ChevronDown, ChevronRight,
-  CircleAlert, CodeXml, Database, FolderOpen, KeyRound, Layers3, LayoutDashboard, Plus,
-  Search, Settings, Terminal, Trash2, X
+  ArrowLeft, ArrowRight, Bell, Check, ChevronDown, ChevronRight,
+  CircleAlert, CodeXml, Database, FolderOpen, KeyRound, Plus,
+  Settings, Terminal, Trash2, X
 } from "lucide-react";
+import * as Icons from "@langfuse/icons";
+import { NavMain } from "@/src/components/nav/NavMain";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarMenuButton, SidebarProvider } from "@/src/components/ui/sidebar";
+import { Table as DataTable } from "@/src/components/design-system/table/Table";
+import { SearchInput } from "@/src/components/design-system/SearchInput/SearchInput";
+import { Timeline } from "@/src/components/design-system/Timeline/Timeline";
+import { Metric } from "@/src/components/design-system/Metric/Metric";
+import { Button } from "@/src/components/design-system/Button/Button";
+import { LayerProvider } from "@/src/context/LayerContext/LayerContext";
+import { DesktopNavigation } from "./langfuse-bridge/navigation.jsx";
+import { DesktopTheme } from "./langfuse-bridge/theme.jsx";
 import { safeTriangle } from "./menu.cjs";
 import { Dialog, Empty, ValueBlock, count, time, duration, useQuery } from "./shared.jsx";
 import { Topics } from "./topics.jsx";
 import { Workspace } from "./workspace.jsx";
-import { BookOpen, Box, FlaskConical, Network, Sparkles, Tags, Upload } from "lucide-react";
 
 const agents = { "kimi-code":"Kimi Code", codex:"Codex", "claude-code":"Claude Code", "deepseek-harness":"DeepSeek Harness", pi:"Pi" };
 const pages = [
-  ["Overview", LayoutDashboard], ["Tracing", Activity], ["Sessions", Layers3],
-  ["Topics", Tags], ["Dashboards", LayoutDashboard], ["Prompts", BookOpen], ["Skills", Box], ["Datasets", Database],
-  ["Evaluations", FlaskConical], ["Scores", Check], ["Playground", Sparkles], ["AI Gateway", Network], ["Exports", Upload]
-];
+  ["Overview", Icons.LayoutDashboard, "/overview"], ["Tracing", Icons.Activity, "/traces"],
+  ["Sessions", Icons.Layers3, "/sessions"], ["Topics", Icons.Tags, "/topics"],
+  ["Dashboards", Icons.LayoutDashboard, "/dashboards"], ["Prompts", Icons.BookOpen, "/prompts"],
+  ["Skills", Icons.Box, "/skills"], ["Datasets", Icons.Database, "/datasets"],
+  ["Evaluations", Icons.FlaskConical, "/evaluations"], ["Scores", Icons.Check, "/scores"],
+  ["Playground", Icons.Sparkles, "/playground"], ["AI Gateway", Icons.Network, "/ai-gateway"],
+  ["Exports", Icons.Upload, "/exports"]
+].map(([title, icon, url]) => ({ title, icon, url }));
+const routes = new Map(pages.map(({ title, url }) => [url, title]));
 const emptyList = { data: [], total: 0 };
 function App() {
   const [state, setState] = useState(null);
@@ -103,8 +119,9 @@ function App() {
   const name = state?.projects.find(item => item.id === project)?.name || "Local";
   const unread = notices.filter(item => !item.read).length;
   return (
-    <div className="desktop">
-      <aside className="sidebar" aria-label="Main navigation">
+    <DesktopNavigation routes={routes} page={page} navigate={navigate}>
+    <SidebarProvider className="desktop" style={{ "--sidebar-width": "var(--window-sidebar-width)" }} open>
+      <Sidebar collapsible="none" className="desktop-sidebar" role="complementary" aria-label="Main navigation">
         <div className="titlebar"></div>
         <div className="wordmark"><span className="mark"><Database size={16}/></span> Confuse</div>
         <div className="project">
@@ -116,31 +133,30 @@ function App() {
             create={() => { setProjectMenu(false); setForm("project"); }}
             showKeys={() => navigate("Settings")} copy={() => state?.sdkEndpoint && api("desktop.copy", { text:state.sdkEndpoint })}/>}
         </div>
-        <nav>
-          {pages.map(([label, Icon]) => <button key={label} className={page === label ? "nav active" : "nav"}
-            aria-current={page === label ? "page" : undefined} onClick={() => navigate(label)}>
-            <Icon size={17}/>{label}
-          </button>)}
-        </nav>
-        <div className="sidebar-bottom">
-          <button className={page === "Settings" ? "nav active" : "nav"} onClick={() => navigate("Settings")}><Settings size={17}/> Settings</button>
-          <button className={noticeOpen ? "nav active" : "nav"} aria-expanded={noticeOpen} onClick={() => setNoticeOpen(!noticeOpen)}>
+        <SidebarContent>
+          <nav aria-label="Workspace">
+            <NavMain items={{ ungrouped: pages.map(item => ({ ...item, isActive: item.title === page })), grouped: null }}/>
+          </nav>
+        </SidebarContent>
+        <SidebarFooter className="sidebar-bottom">
+          <SidebarMenuButton isActive={page === "Settings"} onClick={() => navigate("Settings")}><Settings size={17}/> Settings</SidebarMenuButton>
+          <SidebarMenuButton isActive={noticeOpen} aria-expanded={noticeOpen} onClick={() => setNoticeOpen(!noticeOpen)}>
             <Bell size={17}/> Notifications{unread > 0 && <span className="unread" aria-label={unread+" unread"}>{unread}</span>}
-          </button>
-        </div>
-      </aside>
+          </SidebarMenuButton>
+        </SidebarFooter>
+      </Sidebar>
       <main className="main">
         <header className="window-strip" aria-hidden="true"></header>
-        <div className="content">
+        <div className="content" key={project}>
           <div className="heading">
             <div className="heading-left">
               {trace && <button className="icon ghost" aria-label="Back to traces" onClick={() => setTrace(null)}><ArrowLeft size={18}/></button>}
               <h1>{trace ? "Trace" : page}</h1>
             </div>
-            {page === "Overview" && <button className="subtle" onClick={() => setSetup(true)}><Plus size={16}/> Connect Agents</button>}
+            {page === "Overview" && <Button variant="outline" text="Connect Agents" onClick={() => setSetup(true)}/>}
           </div>
           {error && <p role="alert" className="error"><CircleAlert size={16}/>{error}<button className="icon ghost" aria-label="Dismiss" onClick={() => setError("")}><X size={15}/></button></p>}
-          {page === "Overview" && <Overview api={api} tick={tick} openTrace={openTrace} connect={() => setSetup(true)}/>}
+          {page === "Overview" && <Overview api={api} tick={tick} openTrace={openTrace}/>}
           {page === "Tracing" && (trace
             ? <TraceDetail api={api} id={trace} tick={tick} remove={async () => {
                 await submit("traces.delete",{id:trace}); setTrace(null);
@@ -186,7 +202,8 @@ function App() {
         <div className="key-field"><span>Secret key</span><code>{sdkKey.secretKey}</code><button className="subtle" onClick={() => api("desktop.copy",{text:sdkKey.secretKey})}>Copy</button></div>
         <footer><button className="primary" onClick={() => setSdkKey(null)}>Done</button></footer>
       </Dialog>}
-    </div>
+    </SidebarProvider>
+    </DesktopNavigation>
   );
 }
 
@@ -313,8 +330,8 @@ function Onboarding({ api, done, close, canClose }) {
   </Dialog>;
 }
 
-function Overview({ api, tick, openTrace, connect }) {
-  const [summary, error] = useQuery(api,"dashboard.summary",{},[tick],{});
+function Overview({ api, tick, openTrace }) {
+  const [summary, error, loading] = useQuery(api,"dashboard.summary",{},[tick],{});
   return <>
     {error && <p className="error" role="alert">{error}</p>}
     <div className="metrics">
@@ -323,36 +340,35 @@ function Overview({ api, tick, openTrace, connect }) {
       ))}
     </div>
     <div className="section-heading"><h2>Recent traces</h2></div>
-    <TraceTable rows={summary.recent || []} select={openTrace} empty={<Empty title="No traces yet" action="Connect Agents" onAction={connect}/>}/>
+    <TraceTable rows={summary.recent || []} select={openTrace} loading={loading} empty={<Empty title="No traces yet"/>}/>
   </>;
 }
 
-function TraceTable({ rows, select, empty }) {
-  return <div className="table-scroll">
-    <table className="data-table">
-      <thead><tr><th>Name</th><th>Source</th><th>Time</th><th className="numeric">Latency</th><th><span className="sr-only">Open</span></th></tr></thead>
-      <tbody>{rows.map(row => <tr key={row.id} onClick={() => select(row.id)}>
-        <td><button className="table-link" onClick={event => {event.stopPropagation();select(row.id);}}>{row.name}</button></td>
-        <td>{row.source}</td><td>{time(row.timestamp)}</td><td className="numeric">{duration(row.latency)}</td><td className="row-action"><ArrowDownRight size={15}/></td>
-      </tr>)}</tbody>
-    </table>
-    {!rows.length && empty}
-  </div>;
+function TraceTable({ rows, select, loading, empty }) {
+  return <DataTable tableName="Traces" columns={traceColumns} data={loading ? { status: "loading" } : { status: "success", data: rows }}
+    noResultsMessage={empty} onRowClick={row => select(row.id)} getRowLabel={row => `${row.name}, ${row.id}`}/>;
 }
+
+const traceColumns = [
+  { accessorKey: "name", header: "Name", size: 230 },
+  { accessorKey: "source", header: "Source", size: 135 },
+  { accessorKey: "timestamp", header: "Time", cell: ({ getValue }) => time(getValue()), size: 175 },
+  { accessorKey: "latency", header: "Latency", cell: ({ getValue }) => duration(getValue()), size: 90 },
+];
 
 function Tracing({ api, tick, query, source, session, setQuery, setSource, setSession, topic, setTopic, openTrace }) {
   const [offset,setOffset]=useState(0);
-  const [result,error]=useQuery(api,"traces.list",{query,source,session,topic:topic?.id,offset},[tick,query,source,session,topic,offset],emptyList);
+  const [result,error,loading]=useQuery(api,"traces.list",{query,source,session,topic:topic?.id,offset},[tick,query,source,session,topic,offset],emptyList);
   useEffect(()=>setOffset(0),[query,source,session,topic]);
   return <>
     <div className="toolbar">
-      <label className="search"><Search size={17}/><input aria-label="Search traces" placeholder="Search traces" value={query} onChange={event=>setQuery(event.target.value)}/></label>
+      <div className="search-field"><SearchInput placeholder="Search traces" value={query} onChange={setQuery} onSubmit={setQuery}/></div>
       <select aria-label="Trace source" value={source} onChange={event=>setSource(event.target.value)}><option value="">All sources</option>{Object.values(agents).concat("SDK","Gateway","Playground").map(name=><option key={name}>{name}</option>)}</select>
       {session && <button className="subtle" onClick={()=>setSession("")}>Session <X size={14}/></button>}
       {topic && <button className="subtle" onClick={()=>setTopic(null)}>{topic.name} <X size={14}/></button>}
     </div>
     {error && <p className="error" role="alert">{error}</p>}
-    <TraceTable rows={result.data} select={openTrace} empty={<Empty title="No matching traces"/>}/>
+    <TraceTable rows={result.data} select={openTrace} loading={loading} empty={<Empty title="No matching traces"/>}/>
     <Pagination total={result.total} offset={offset} setOffset={setOffset}/>
   </>;
 }
@@ -368,27 +384,30 @@ function Pagination({ total, offset, setOffset }) {
 
 function Sessions({ api, tick, select }) {
   const [offset,setOffset]=useState(0);
-  const [sessions,error]=useQuery(api,"sessions.list",{offset},[tick,offset],emptyList);
+  const [sessions,error,loading]=useQuery(api,"sessions.list",{offset},[tick,offset],emptyList);
   return <>
     {error && <p className="error" role="alert">{error}</p>}
-    <table className="data-table"><thead><tr><th>Session</th><th>Source</th><th>Last active</th><th className="numeric">Traces</th></tr></thead>
-      <tbody>{sessions.data.map(row=><tr key={row.id} onClick={()=>select(row.id)}>
-        <td><button className="table-link" onClick={event=>{event.stopPropagation();select(row.id);}}>{row.id}</button></td>
-        <td>{row.source}</td><td>{time(row.updatedAt)}</td><td className="numeric">{count(row.traceCount)}</td>
-      </tr>)}</tbody></table>
-    {!sessions.data.length && <Empty title="No sessions yet"/>}
+    <DataTable tableName="Sessions" columns={sessionColumns} data={loading ? { status: "loading" } : { status: "success", data: sessions.data }}
+      onRowClick={row => select(row.id)} getRowLabel={row => row.id} noResultsMessage={<Empty title="No sessions yet"/>}/>
     <Pagination total={sessions.total} offset={offset} setOffset={setOffset}/>
   </>;
 }
+
+const sessionColumns = [
+  { accessorKey: "id", header: "Session", size: 225 },
+  { accessorKey: "source", header: "Source", size: 135 },
+  { accessorKey: "updatedAt", header: "Last active", cell: ({ getValue }) => time(getValue()), size: 175 },
+  { accessorKey: "traceCount", header: "Traces", cell: ({ getValue }) => count(getValue()), size: 90 },
+];
 
 function Scores({ api, tick, openTrace }) {
   const [offset,setOffset]=useState(0);
   const [scores,error]=useQuery(api,"scores.list",{offset},[tick,offset],emptyList);
   return <>
     {error && <p className="error" role="alert">{error}</p>}
-    <table className="data-table"><thead><tr><th>Name</th><th>Value</th><th>Source</th><th>Trace</th></tr></thead>
-      <tbody>{scores.data.map(row=><tr key={row.id}><td>{row.name}</td><td>{String(row.stringValue??row.value)}</td><td>{row.source}</td>
-        <td>{row.traceId && <button className="table-link" onClick={()=>openTrace(row.traceId)}>{row.traceId}</button>}</td></tr>)}</tbody></table>
+    <Table className="data-table"><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Value</TableHead><TableHead>Source</TableHead><TableHead>Trace</TableHead></TableRow></TableHeader>
+      <TableBody>{scores.data.map(row=><TableRow key={row.id}><TableCell>{row.name}</TableCell><TableCell>{String(row.stringValue??row.value)}</TableCell><TableCell>{row.source}</TableCell>
+        <TableCell>{row.traceId && <button className="table-link" onClick={()=>openTrace(row.traceId)}>{row.traceId}</button>}</TableCell></TableRow>)}</TableBody></Table>
     {!scores.data.length && <Empty title="No scores yet"/>}
     <Pagination total={scores.total} offset={offset} setOffset={setOffset}/>
   </>;
@@ -417,12 +436,21 @@ function TraceDetail({ api, id, tick, remove, update }) {
     <div className="detail">
       <section className="observations" aria-label="Observations">
         <h3>Observations</h3>
-        {data.observations.map(row=><button key={row.id} className={"observation"+(selected===row.id?" selected":"")} style={{paddingInlineStart:12+depth(row)*13}}
-          onClick={()=>setSelected(selected===row.id?null:row.id)}><span className="observation-dot"></span><span>{row.name}</span><small>{row.type}</small></button>)}
+        <Timeline>
+          {data.observations.map(row=><Timeline.Item key={row.id} isActive={selected===row.id}>
+            <button type="button" className="observation" style={{paddingInlineStart:depth(row)*13}}
+              aria-pressed={selected===row.id} onClick={()=>setSelected(selected===row.id?null:row.id)}>
+              <span>{row.name}</span><small>{row.type}</small>
+            </button>
+          </Timeline.Item>)}
+        </Timeline>
       </section>
       <section className="inspector">
         <h3>{current.name}</h3>
-        {current.model && <span className="muted">{current.model} · {count(current.usage?.total)} tokens</span>}
+        {current.model && <div className="actions">
+          <Metric label="Model" value={current.model} shouldWrap/>
+          {current.usage?.total != null && <Metric label="Tokens" value={count(current.usage.total)}/>}
+        </div>}
         <ValueBlock name="Input" value={current.input}/><ValueBlock name="Output" value={current.output}/>
         {data.scores.length>0 && <ValueBlock name="Scores" value={data.scores}/>}
         {observation && <ValueBlock name="Metadata" value={observation.metadata}/>}
@@ -453,12 +481,12 @@ function SettingsPage({ api, state, tick, connect, modelConnections, uninstall, 
   return <>
     {error && <p className="error" role="alert">{error}</p>}
     <div className="section-heading"><h2>Agents</h2><button className="subtle" onClick={connect}>Manage</button></div>
-    <table className="data-table"><thead><tr><th>Agent</th><th>Installation</th><th>Collection</th><th>Session directory</th></tr></thead>
-      <tbody>{sources.installations.map(item=>{
+    <Table className="data-table"><TableHeader><TableRow><TableHead>Agent</TableHead><TableHead>Installation</TableHead><TableHead>Collection</TableHead><TableHead>Session directory</TableHead></TableRow></TableHeader>
+      <TableBody>{sources.installations.map(item=>{
         const current=sources.sources.find(row=>row.selection.agent===item.agent&&row.active);
-        return <tr key={item.agent}><td>{agents[item.agent]}</td><td>{item.executable?"Detected":"Unavailable"}</td>
-          <td>{current ? current.pending?"Connecting":"Enabled" : "Disabled"}</td><td className="path" title={current?.selection.root||item.root}>{current?.selection.root||item.root}</td></tr>;
-      })}</tbody></table>
+        return <TableRow key={item.agent}><TableCell>{agents[item.agent]}</TableCell><TableCell>{item.executable?"Detected":"Unavailable"}</TableCell>
+          <TableCell>{current ? current.pending?"Connecting":"Enabled" : "Disabled"}</TableCell><TableCell className="path" title={current?.selection.root||item.root}>{current?.selection.root||item.root}</TableCell></TableRow>;
+      })}</TableBody></Table>
     <div className="section-heading"><h2>Models</h2><button className="subtle" onClick={modelConnections}>Model connections</button></div>
     <div className="section-heading"><h2>Local SDK</h2></div>
     <form className="inline-form" onSubmit={event=>{event.preventDefault();changePort(Number(port)).catch(()=>{});}}>
@@ -468,9 +496,9 @@ function SettingsPage({ api, state, tick, connect, modelConnections, uninstall, 
     </form>
     {state?.listenerError && <p className="error" role="alert">{state.listenerError}</p>}
     <div className="section-heading"><h2>API keys</h2><button className="subtle" onClick={()=>createKey("sdk")}><Plus size={15}/> Create key</button></div>
-    <table className="data-table"><thead><tr><th>Public key</th><th>Secret</th><th>Kind</th><th></th></tr></thead>
-      <tbody>{keys.map(key=><tr key={key.id}><td><code>{key.publicKey}</code></td><td><code>{key.displaySecretKey}</code></td>
-        <td>{key.kind}</td><td className="row-action"><button className="icon ghost" aria-label="Revoke key" onClick={()=>setPending(key.id)}><Trash2 size={15}/></button></td></tr>)}</tbody></table>
+    <Table className="data-table"><TableHeader><TableRow><TableHead>Public key</TableHead><TableHead>Secret</TableHead><TableHead>Kind</TableHead><TableHead></TableHead></TableRow></TableHeader>
+      <TableBody>{keys.map(key=><TableRow key={key.id}><TableCell><code>{key.publicKey}</code></TableCell><TableCell><code>{key.displaySecretKey}</code></TableCell>
+        <TableCell>{key.kind}</TableCell><TableCell className="row-action"><button className="icon ghost" aria-label="Revoke key" onClick={()=>setPending(key.id)}><Trash2 size={15}/></button></TableCell></TableRow>)}</TableBody></Table>
     {!keys.length && <p className="muted padded">No API keys yet</p>}
     <div className="section-heading"><h2>Installation</h2><button className="subtle" onClick={uninstall}>Uninstall Confuse…</button></div>
     {pending && <Dialog title="Revoke key?" close={()=>setPending("")}>
@@ -494,4 +522,4 @@ function Notifications({ notices, close, mark, retry }) {
   </section>;
 }
 
-createRoot(document.getElementById("app")).render(<App/>);
+createRoot(document.getElementById("app")).render(<DesktopTheme><LayerProvider><App/></LayerProvider></DesktopTheme>);
