@@ -9,5 +9,5 @@ const backend = new Set([
   "workspace.playground", "workspace.run-experiment", "workspace.evaluate",
   "topics.list", "topics.estimate", "topics.save", "topics.change", "topics.delete", "topics.result", "topics.history"
 ]);
-const shell = new Set(["desktop.pick-directory", "desktop.copy", "desktop.uninstall"]);
+const shell = new Set(["desktop.pick-directory", "desktop.copy", "desktop.hide", "desktop.quit", "desktop.uninstall"]);
 module.exports = { backend, shell };

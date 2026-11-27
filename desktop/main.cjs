@@ -58,16 +58,6 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", event => event.preventDefault());
   mainWindow.webContents.on("will-attach-webview", event => event.preventDefault());
-  mainWindow.webContents.on("before-input-event", (event, input) => {
-    if (input.type !== "keyDown" || !input.meta || input.alt || input.control || input.shift) return;
-    if (input.key.toLowerCase() === "q") {
-      event.preventDefault();
-      app.quit();
-    } else if (input.key.toLowerCase() === "w") {
-      event.preventDefault();
-      mainWindow?.close();
-    }
-  });
   mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   mainWindow.webContents.session.setPermissionCheckHandler(() => false);
   void mainWindow.loadURL(ui + "/index.html");
@@ -107,6 +97,14 @@ async function invoke(event, message) {
   const { channel, payload } = message ?? {};
   if (backend && channels.backend.has(channel)) return backend.request(channel, payload);
   if (!channels.shell.has(channel)) throw new Error("Unsupported desktop action");
+  if (channel === "desktop.hide") {
+    mainWindow.close();
+    return true;
+  }
+  if (channel === "desktop.quit") {
+    setImmediate(() => app.quit());
+    return true;
+  }
   if (channel === "desktop.pick-directory") {
     const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
     return result.canceled ? null : result.filePaths[0];

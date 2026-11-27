@@ -53,7 +53,20 @@ function App() {
     const timer = setInterval(() => setTick(value => value+1), 2500);
     const off = window.confuse.onReopenSetup(() => setSetup(true));
     const offUninstall = window.confuse.onUninstallRequested(() => setForm("uninstall"));
-    return () => { clearInterval(timer); off(); offUninstall(); };
+    const onShortcut = event => {
+      if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.repeat) return;
+      const channel = { w: "desktop.hide", q: "desktop.quit" }[event.key.toLowerCase()];
+      if (!channel) return;
+      event.preventDefault();
+      window.confuse.invoke(channel).catch(reason => setError(reason.message));
+    };
+    window.addEventListener("keydown", onShortcut);
+    return () => {
+      clearInterval(timer);
+      off();
+      offUninstall();
+      window.removeEventListener("keydown", onShortcut);
+    };
   }, []);
 
   function navigate(next) {

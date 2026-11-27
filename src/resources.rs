@@ -93,7 +93,10 @@ impl Store {
                 let existing:Value=decode(exist.as_deref().context("Dataset not found")?)?;
                 object.insert("datasetId".to_owned(),existing["id"].clone());
                 object.insert("datasetName".to_owned(),existing["name"].clone());
-                object.entry("status").or_insert(json!("ACTIVE"));
+                if object.get("status").is_none_or(Value::is_null) {
+                    object.insert("status".to_owned(),json!("ACTIVE"));
+                }
+                object.entry("mediaReferences").or_insert(json!([]));
                 for key in ["input","expectedOutput","metadata","sourceTraceId","sourceObservationId"] {
                     object.entry(key).or_insert(Value::Null);
                 }
@@ -167,6 +170,9 @@ impl Store {
                 let mut item: Value = decode(&raw)?;
                 if item["version"] == version {
                     let mut next = string_list(&item["labels"]);
+                    if kind == "skills" {
+                        next.retain(|label| label == "latest");
+                    }
                     for label in labels {
                         if !next.contains(label) {
                             next.push(label.clone());
@@ -189,6 +195,9 @@ impl Store {
     }
 
     fn new_version(&self, project: &str, kind: &str, mut value: Value) -> Result<Value> {
+        if kind == "skills" {
+            crate::skills::normalize(self, project, &mut value)?;
+        }
         let name = value
             .get("name")
             .and_then(Value::as_str)

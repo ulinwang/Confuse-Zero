@@ -555,4 +555,98 @@ mod tests {
         assert_eq!(value["value"], 1);
         assert!(code_score("() => { while (true) {} }", &json!({})).is_err());
     }
+    #[tokio::test]
+    async fn workspace_runs_a_prompt_experiment_dashboard_alert_and_local_export() {
+        use axum::{Json, Router, routing::post};
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let provider=Router::new().route("/v1/chat/completions",post(|Json(request):Json<Value>|async move{
+            Json(json!({"choices":[{"message":{"content":format!("Result for {}",request["messages"][0]["content"].as_str().unwrap_or_default())}}],
+                "usage":{"prompt_tokens":3,"completion_tokens":2}}))
+        }));
+        let provider_task = tokio::spawn(async move {
+            axum::serve(listener, provider).await.unwrap();
+        });
+        let store = Store::memory().unwrap();
+        let project = crate::store::DEFAULT_PROJECT;
+        let provider = store
+            .configure_provider(
+                project,
+                json!({"name":"test","model":"test",
+            "baseUrl":format!("http://{address}/v1"),"format":"openai"}),
+            )
+            .unwrap();
+        store
+            .put_resource(
+                project,
+                "prompts",
+                json!({"name":"greeting","prompt":"Hello {{name}}","labels":["production"]}),
+            )
+            .unwrap();
+        let completion = playground(
+            &store,
+            project,
+            &json!({"provider":provider["id"],"promptName":"greeting","promptVersion":1,
+            "variables":{"name":"Morgan"}}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(completion["output"], "Result for Hello Morgan");
+        let trace_id = completion["traceId"].as_str().unwrap();
+        let spans = store
+            .observations(project, Some(trace_id), None, 10, 0)
+            .unwrap()
+            .0;
+        assert_eq!(spans[0].prompt_name.as_deref(), Some("greeting"));
+        assert_eq!(spans[0].prompt_version, Some(1));
+        let evaluator = store
+            .put_resource(
+                project,
+                "evaluators",
+                json!({"name":"nonempty","type":"code",
+            "code":"({ output }) => ({ value: output ? 1 : 0 })"}),
+            )
+            .unwrap();
+        let dataset = store
+            .put_resource(project, "datasets", json!({"name":"fixture"}))
+            .unwrap();
+        store.put_resource(project,"dataset-items",json!({"datasetId":dataset["id"],"input":"Fixture","expectedOutput":"Result for Fixture"})).unwrap();
+        let queued=queue_experiment(&store,project,json!({"name":"fixture run","datasetId":dataset["id"],"provider":provider["id"],"evaluator":evaluator["id"]})).unwrap();
+        experiment(&store, project, &queued).await.unwrap();
+        let result = store
+            .resource(project, "experiments", queued["id"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["status"], "Complete");
+        assert_eq!(result["completed"], 1);
+        assert_eq!(store.scores(project, None, None, 10, 0).unwrap().1, 1);
+
+        let metrics=store.metrics(project,&json!({"view":"observations","metrics":[{"measure":"totalTokens","aggregation":"sum"}]})).unwrap();
+        assert_eq!(metrics["data"][0]["sum_totalTokens"], 10.0);
+        store.put_resource(project,"alerts",json!({"name":"volume","measure":"count","aggregation":"count","threshold":1,"windowMinutes":60})).unwrap();
+        poll_alerts(&store, project).unwrap();
+        poll_alerts(&store, project).unwrap();
+        let notices = store.notifications(project).unwrap();
+        assert_eq!(
+            notices
+                .iter()
+                .filter(|row| row["title"] == "volume")
+                .count(),
+            1
+        );
+
+        let directory = tempfile::tempdir().unwrap();
+        let export = write_export(
+            &store,
+            project,
+            &json!({"directory":directory.path(),"format":"jsonl","source":"Playground"}),
+        )
+        .unwrap();
+        assert_eq!(export["count"], 1);
+        let data = std::fs::read_to_string(export["path"].as_str().unwrap()).unwrap();
+        let trace: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(trace["source"], "Playground");
+        provider_task.abort();
+    }
 }

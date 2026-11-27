@@ -73,7 +73,9 @@ function ResourceForm({ kind, initial, defaults, providers, choices, close, save
       finally{setBusy(false);}
     }}>
       <div className="resource-fields">
-        {spec.fields.map(field=><Field key={field[0]} spec={field} value={initial?.[field[0]]} providers={providers} choices={choices}/>)}
+        {spec.fields.map(field=><Field key={field[0]} spec={field} value={kind==="skills" && field[0]==="files"
+          ? initial?.files?.filter(file=>file.path!=="SKILL.md").map(file=>file.content!==undefined?{path:file.path,content:file.content}:{path:file.path,sha256Hash:file.sha256Hash})
+          : initial?.[field[0]]} providers={providers} choices={choices}/>)}
       </div>
       <footer><button type="button" className="subtle" onClick={close}>Cancel</button><button className="primary" disabled={busy}>{initial?.id&&["prompts","skills"].includes(kind)?"Save new version":"Save"}</button></footer>
     </form>

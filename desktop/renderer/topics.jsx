@@ -11,6 +11,7 @@ export function Topics({ api, tick, refresh, openTrace, filterByTopic, navigate 
   const [selected,setSelected] = useState("");
   const [facet,setFacet] = useState("intent");
   const [chart,setChart] = useState("treemap");
+  const [zoom,setZoom] = useState(1);
   const [activeTopic,setActiveTopic] = useState("");
   const [editing,setEditing] = useState(null);
   const [history,setHistory] = useState(false);
@@ -73,11 +74,14 @@ export function Topics({ api, tick, refresh, openTrace, filterByTopic, navigate 
           <button aria-pressed={chart==="treemap"} onClick={()=>setChart("treemap")}><Boxes size={15}/> Treemap</button>
           <button aria-pressed={chart==="scatter"} onClick={()=>setChart("scatter")}><Activity size={15}/> Scatter</button>
         </div>
-        <span className="muted">{count(data.assignments.length)} traces</span>
+        <div className="actions">
+          {chart==="scatter" && <label className="scatter-zoom">Zoom <input type="range" min="1" max="3" step=".1" value={zoom} onChange={event=>setZoom(Number(event.target.value))}/></label>}
+          <span className="muted">{count(data.assignments.length)} traces</span>
+        </div>
       </div>
       {data.assignments.length===0 ? <Empty title={active.status==="Insufficient data"?"Insufficient data":"Waiting for results"}/>
         : chart==="treemap" ? <Treemap topics={data.topics} assignments={data.assignments} selected={activeTopic} select={setActiveTopic}/>
-        : <Scatter rows={data.assignments} topic={activeTopic} select={setActiveTopic} openTrace={openTrace}/>}
+        : <Scatter rows={data.assignments} zoom={zoom} topic={activeTopic} select={setActiveTopic} openTrace={openTrace}/>}
       <div className="section-heading">
         <h2>{topic?.name || (activeTopic==="unassigned" ? "Unassigned" : "Traces")}</h2>
         <div className="actions">
@@ -188,15 +192,13 @@ function Treemap({ topics, assignments, selected, select }) {
   </div>;
 }
 
-function Scatter({ rows, topic, select, openTrace }) {
-  const [zoom,setZoom] = useState(1);
+function Scatter({ rows, zoom, topic, select, openTrace }) {
   const extent=useMemo(()=>{
     let left=Infinity,top=Infinity,right=-Infinity,bottom=-Infinity;
     for(const row of rows){left=Math.min(left,row.x);right=Math.max(right,row.x);top=Math.min(top,row.y);bottom=Math.max(bottom,row.y);}
     return {left,right,bottom,top};
   },[rows]);
   return <div className="topic-plot scatter" aria-label="Topics scatter plot">
-    <label className="scatter-zoom">Zoom <input type="range" min="1" max="3" step=".1" value={zoom} onChange={event=>setZoom(Number(event.target.value))}/></label>
     {rows.map(row=>{
       const x=extent.left===extent.right ? 50: 8+84*(row.x-extent.left)/(extent.right-extent.left);
       const y=extent.top===extent.bottom ? 50: 8+84*(row.y-extent.top)/(extent.bottom-extent.top);
