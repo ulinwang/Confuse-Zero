@@ -89,19 +89,44 @@ pub(crate) async fn dispatch(
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
         (&Method::GET, "skills", ["files", "content"]) => {
-            let id =
-                param(query, "sha256Hash").ok_or_else(|| Failure::bad("sha256Hash is required"))?;
-            let skills = store.resources(project, "skills")?;
-            let records = skills
-                .iter()
-                .filter_map(|row| row["files"].as_array())
-                .flatten()
-                .filter(|row| row["sha256Hash"] == id)
-                .cloned()
-                .collect::<Vec<_>>();
-            json!({"files":records})
+            let hashes = param(query, "sha256Hashes")
+                .ok_or_else(|| Failure::bad("sha256Hashes is required"))?;
+            json!({"data":crate::skills::contents(store,project,hashes).map_err(input_error)?})
         }
-        (&Method::GET, "prompts" | "skills", []) => {
+        (&Method::GET, "skills", []) => {
+            let data = filter(
+                crate::skills::versions(store, project)?,
+                query,
+                search_filters.as_ref(),
+            );
+            let mut result = paginate(data, page, limit, offset);
+            result["meta"]["hasNextPage"] =
+                json!(page < result["meta"]["totalPages"].as_u64().unwrap_or_default() as usize);
+            result
+        }
+        (&Method::POST, "skills", []) => {
+            let data = body_json(body, headers).await?;
+            let result = store
+                .put_resource(project, "skills", data)
+                .map_err(input_error)?;
+            return Ok((
+                StatusCode::CREATED,
+                axum::Json(crate::skills::manifest(result, false)),
+            )
+                .into_response());
+        }
+        (&Method::PATCH, "skills", [name]) => {
+            let data = body_json(body, headers).await?;
+            let result = crate::skills::update_tags(
+                store,
+                project,
+                name,
+                crate::resources::string_list(&data["tags"]),
+            )
+            .map_err(|_| Failure::missing())?;
+            crate::skills::manifest(result, false)
+        }
+        (&Method::GET, "prompts", []) => {
             let items = filter(
                 store.resources(project, kind)?,
                 query,
@@ -133,9 +158,14 @@ pub(crate) async fn dispatch(
                 .map(str::parse::<i64>)
                 .transpose()
                 .map_err(|_| Failure::bad("Invalid version"))?;
-            store
+            let result = store
                 .versioned(project, kind, name, version, param(query, "label"))?
-                .ok_or_else(Failure::missing)?
+                .ok_or_else(Failure::missing)?;
+            if kind == "skills" {
+                crate::skills::manifest(result, param(query, "includeContent") == Some("true"))
+            } else {
+                result
+            }
         }
         (&Method::PATCH, "prompts" | "skills", [name, "versions", version])
         | (&Method::PATCH, "prompt-versions", [name, version]) => {
@@ -166,11 +196,12 @@ pub(crate) async fn dispatch(
                     None,
                 )?
                 .ok_or_else(Failure::missing)?;
-            removed(store.delete_resource(
+            let deleted = store.delete_resource(
                 project,
                 kind,
                 value["id"].as_str().ok_or_else(Failure::missing)?,
-            )?)?
+            )?;
+            json!({"deleted":deleted})
         }
         (&Method::GET, "annotation-queues", [queue, "items"]) => {
             let data = store

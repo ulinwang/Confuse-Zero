@@ -5,6 +5,7 @@ pub mod model;
 pub mod otlp;
 pub mod providers;
 pub mod resources;
+mod skills;
 pub mod store;
 mod topic_cluster;
 pub mod topics;
