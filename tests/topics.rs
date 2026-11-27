@@ -184,6 +184,52 @@ async fn topics_runs_local_models_keeps_snapshots_and_resolves_project_scoped_re
         assert!(result["meta"]["cursor"].is_null());
     }
 
+    let key = store.create_key(DEFAULT_PROJECT, "sdk").unwrap();
+    let authorization = format!(
+        "Basic {}",
+        STANDARD.encode(format!("{}:{}", key.public_key, key.secret_key))
+    );
+    let listing = router
+        .clone()
+        .oneshot(
+            Request::post("/api/public/mcp")
+                .header("authorization", &authorization)
+                .body(Body::from(
+                    json!({"id":1,"method":"tools/list","jsonrpc":"2.0"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(listing.status(), StatusCode::OK);
+    let listing: Value = serde_json::from_slice(
+        &axum::body::to_bytes(listing.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        listing["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "listTopicAssignments")
+    );
+    let reply=router.oneshot(Request::post("/api/public/mcp").header("authorization",&authorization)
+        .body(Body::from(json!({"id":2,"method":"tools/call","params":{"name":"listTopicFacets"},"jsonrpc":"2.0"}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(reply.status(), StatusCode::OK);
+    let reply: Value = serde_json::from_slice(
+        &axum::body::to_bytes(reply.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains(r#""intent""#)
+    );
     let first = traces[0].trace.id.clone();
     assert!(store.delete_trace(DEFAULT_PROJECT, &first).unwrap());
     let active = topics::result(&store, DEFAULT_PROJECT, id, Some("intent")).unwrap();

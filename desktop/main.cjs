@@ -2,10 +2,10 @@
 // the MIT-licensed Confuse desktop shell (see LICENSE).
 const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, shell } = require("electron");
 const { existsSync, mkdirSync } = require("node:fs");
-const { rm } = require("node:fs/promises");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { Backend } = require("./backend.cjs");
+const { verifyBundle, removeInstallation } = require("./uninstall.cjs");
 const channels = require("./channels.cjs");
 
 const ui = "confuse-ui://workspace";
@@ -58,6 +58,16 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", event => event.preventDefault());
   mainWindow.webContents.on("will-attach-webview", event => event.preventDefault());
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || !input.meta || input.alt || input.control || input.shift) return;
+    if (input.key.toLowerCase() === "q") {
+      event.preventDefault();
+      app.quit();
+    } else if (input.key.toLowerCase() === "w") {
+      event.preventDefault();
+      mainWindow?.close();
+    }
+  });
   mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   mainWindow.webContents.session.setPermissionCheckHandler(() => false);
   void mainWindow.loadURL(ui + "/index.html");
@@ -75,25 +85,20 @@ function showMainWindow() {
 
 async function uninstall() {
   if (!app.isPackaged) throw new Error("Uninstall is available in the installed application");
-  const result = await dialog.showMessageBox(mainWindow, {
-    type: "warning", title: "Uninstall Confuse", message: "Remove Confuse and its local data?",
-    buttons: ["Cancel", "Uninstall"], defaultId: 0, cancelId: 0
-  });
-  if (result.response !== 1) return false;
   const bundle = path.resolve(process.execPath, "../../..");
-  if (path.basename(bundle) !== "Confuse Zero.app") throw new Error("Confuse installation path could not be verified");
+  verifyBundle(bundle);
   await backend.request("desktop.cleanup", {});
   await backend.stop();
   didQuit = true;
   mainWindow.close();
-  for (const filename of ["confuse.sqlite", "confuse.sqlite-shm", "confuse.sqlite-wal", "Desktop"]) {
-    await rm(path.join(data, filename), { recursive: filename === "Desktop", force: true });
+  try {
+    await removeInstallation({ bundle, data, trash: file => shell.trashItem(file) });
+  } catch (error) {
+    dialog.showErrorBox("Uninstall Confuse", error.message);
+    throw error;
+  } finally {
+    app.quit();
   }
-  if (existsSync(data)) await require("node:fs/promises").rmdir(data).catch(error => {
-    if (error.code !== "ENOTEMPTY") throw error;
-  });
-  await shell.trashItem(bundle);
-  app.quit();
   return true;
 }
 
@@ -111,6 +116,7 @@ async function invoke(event, message) {
     clipboard.writeText(payload.text);
     return true;
   }
+  if (payload?.confirmed !== true) throw new Error("Confirm removal before uninstalling Confuse");
   return uninstall();
 }
 
@@ -124,7 +130,10 @@ function installMenu() {
     { type: "separator" },
     { role: "hide" }, { role: "hideOthers" }, { role: "unhide" },
     { type: "separator" },
-    { label: "Uninstall Confuse…", click: () => uninstall().catch(error => dialog.showErrorBox("Uninstall", error.message)) },
+    { label: "Uninstall Confuse…", click: () => {
+      showMainWindow();
+      mainWindow.webContents.send("confuse:request-uninstall");
+    } },
     { role: "quit" }
   ] };
   Menu.setApplicationMenu(Menu.buildFromTemplate([mac, { role: "editMenu" }, { role: "windowMenu" }]));

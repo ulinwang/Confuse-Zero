@@ -52,7 +52,8 @@ function App() {
     }, reason => setError(reason.message));
     const timer = setInterval(() => setTick(value => value+1), 2500);
     const off = window.confuse.onReopenSetup(() => setSetup(true));
-    return () => { clearInterval(timer); off(); };
+    const offUninstall = window.confuse.onUninstallRequested(() => setForm("uninstall"));
+    return () => { clearInterval(timer); off(); offUninstall(); };
   }, []);
 
   function navigate(next) {
@@ -136,7 +137,7 @@ function App() {
           {page === "Sessions" && <Sessions api={api} tick={tick} select={id => {setSession(id);setPage("Tracing");}}/>}
           {page === "Scores" && <Scores api={api} tick={tick} openTrace={openTrace}/>}
           {page === "Settings" && <SettingsPage api={api} state={state} tick={tick} connect={() => setSetup(true)}
-            modelConnections={()=>navigate("Model connections")} createKey={async kind => setSdkKey(await submit("keys.create",{kind}))}
+            modelConnections={()=>navigate("Model connections")} uninstall={()=>setForm("uninstall")} createKey={async kind => setSdkKey(await submit("keys.create",{kind}))}
             revoke={id => submit("keys.revoke",{id})} changePort={async port => {await submit("desktop.set-port",{port});await reload();}}/>}
         </div>
       </main>
@@ -154,6 +155,13 @@ function App() {
           <label className="field">Name<input name="name" required autoFocus maxLength={150}/></label>
           <footer><button type="button" className="subtle" onClick={() => setForm(null)}>Cancel</button><button className="primary">Create project</button></footer>
         </form>
+      </Dialog>}
+      {form === "uninstall" && <Dialog title="Remove Confuse and its local data?" close={() => setForm(null)}>
+        <footer><button className="subtle" onClick={() => setForm(null)}>Cancel</button>
+          <button className="primary" onClick={async () => {
+            try {await api("desktop.uninstall", {confirmed:true});}
+            catch (reason) {setForm(null);setError(reason.message);}
+          }}>Uninstall Confuse</button></footer>
       </Dialog>}
       {sdkKey && <Dialog title="New API key" close={() => setSdkKey(null)}>
         <div className="key-field"><span>Public key</span><code>{sdkKey.publicKey}</code><button className="subtle" onClick={() => api("desktop.copy",{text:sdkKey.publicKey})}>Copy</button></div>
@@ -410,7 +418,7 @@ function TraceDetail({ api, id, tick, remove, update }) {
   </>;
 }
 
-function SettingsPage({ api, state, tick, connect, modelConnections, createKey, revoke, changePort }) {
+function SettingsPage({ api, state, tick, connect, modelConnections, uninstall, createKey, revoke, changePort }) {
   const [sources,error] = useQuery(api,"agents.scan",{},[tick],{installations:[],sources:[]});
   const [keys] = useQuery(api,"keys.list",{},[tick],[]);
   const [port,setPort]=useState(state?.port || 32127);
@@ -437,6 +445,7 @@ function SettingsPage({ api, state, tick, connect, modelConnections, createKey, 
       <tbody>{keys.map(key=><tr key={key.id}><td><code>{key.publicKey}</code></td><td><code>{key.displaySecretKey}</code></td>
         <td>{key.kind}</td><td className="row-action"><button className="icon ghost" aria-label="Revoke key" onClick={()=>setPending(key.id)}><Trash2 size={15}/></button></td></tr>)}</tbody></table>
     {!keys.length && <p className="muted padded">No API keys yet</p>}
+    <div className="section-heading"><h2>Installation</h2><button className="subtle" onClick={uninstall}>Uninstall Confuse…</button></div>
     {pending && <Dialog title="Revoke key?" close={()=>setPending("")}>
       <footer><button className="subtle" onClick={()=>setPending("")}>Cancel</button><button className="primary" onClick={async()=>{await revoke(pending);setPending("");}}>Revoke</button></footer>
     </Dialog>}

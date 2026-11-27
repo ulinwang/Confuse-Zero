@@ -93,7 +93,7 @@ function Registry({ kind, api, tick, refresh, providers, choices=[], filters, de
     return result;
   }
   return <>
-    <div className="section-heading registry-head"><h2>{label}</h2><button className="subtle" onClick={()=>setEditing({})}><Plus size={15}/> New {spec.singular}</button></div>
+    <div className="section-heading registry-head">{label ? <h2>{label}</h2> : <div className="toolbar-spacer"/>}<button className="subtle" onClick={()=>setEditing({})}><Plus size={15}/> New {spec.singular}</button></div>
     {(fault||error) && <p className="error" role="alert">{fault||error}</p>}
     <table className="data-table"><thead><tr><th>{kind.endsWith("-items")?"Entry":"Name"}</th><th>Updated</th><th>{kind==="prompts"||kind==="skills"?"Labels":"Status"}</th><th></th></tr></thead>
       <tbody>{rows.map(row=><tr key={row.id}>
@@ -105,7 +105,7 @@ function Registry({ kind, api, tick, refresh, providers, choices=[], filters, de
           <button className="icon ghost" aria-label={"Delete "+spec.singular} onClick={()=>setRemoving(row)}><Trash2 size={15}/></button></td>
       </tr>)}</tbody>
     </table>
-    {!rows.length && <Empty title={"No "+spec.singular+" records yet"} action={"New "+spec.singular} onAction={()=>setEditing({})}/>}
+    {!rows.length && <Empty title={"No "+spec.singular+" records yet"}/>}
     {editing && <ResourceForm kind={kind} initial={editing} defaults={defaults} providers={providers} choices={choices} close={()=>setEditing(null)} save={save}/>}
     {removing && <Dialog title={"Delete "+spec.singular+"?"} close={()=>setRemoving(null)}>
       <footer><button className="subtle" onClick={()=>setRemoving(null)}>Cancel</button>
@@ -163,7 +163,7 @@ function Playground({ api,tick,providers,openTrace,navigate }) {
 
 function Datasets({ api,tick,refresh,providers }) {
   const [dataset,setDataset]=useState(null);
-  if (!dataset) return <Registry kind="datasets" label="Datasets" api={api} tick={tick} refresh={refresh} providers={providers} onSelect={setDataset}/>;
+  if (!dataset) return <Registry kind="datasets" api={api} tick={tick} refresh={refresh} providers={providers} onSelect={setDataset}/>;
   return <>
     <div className="toolbar"><button className="subtle" onClick={()=>setDataset(null)}>Back to datasets</button><h2>{dataset.name}</h2></div>
     <Registry kind="dataset-items" label="Items" api={api} tick={tick} refresh={refresh} providers={providers}
@@ -308,5 +308,5 @@ export function Workspace({ page, api, tick, refresh, navigate, openTrace, state
     </tbody></table>
   </>;
   const kind={Prompts:"prompts",Skills:"skills","Model connections":"llm-connections"}[page];
-  return <Registry kind={kind} label={page} {...common}/>;
+  return <Registry kind={kind} {...common}/>;
 }

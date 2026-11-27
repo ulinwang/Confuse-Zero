@@ -116,8 +116,8 @@ footer .left { margin-right:auto; }
 .agent-name small { display:block;color:var(--muted);margin-top:4px;font-size:12px; }
 .agent-icon { width:33px;height:33px;display:grid;place-items:center;background:var(--sidebar);border-radius:7px;color:var(--muted); }
 .history { color:var(--muted);font-size:12px;white-space:nowrap; }
-.folder { opacity:.7;color:var(--muted); }
-.agent-row:hover .folder,.folder:focus-visible { opacity:1; }
+.folder { opacity:0;color:var(--muted); }
+.agent-row:hover .folder,.agent-row:focus-within .folder { opacity:1; }
 .field { display:flex;flex-direction:column;gap:6px;margin:12px 0;min-width:0; }
 .inline-form { align-items:flex-end;margin-bottom:22px; }
 .inline-form .field { margin:0; }

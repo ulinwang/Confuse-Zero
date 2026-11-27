@@ -304,12 +304,13 @@ fn mcp(store: &Store, project: &str, request: &Value) -> Result<Value> {
     let id = request["id"].clone();
     let arguments = &request["params"]["arguments"];
     let mut tools = vec![
-        json!({"name":"list_topics","description":"List current live Topics","inputSchema":{"type":"object","properties":{}}}),
-        json!({"name":"list_topic_facets","description":"List built-in Topics facets","inputSchema":{"type":"object","properties":{}}}),
-        json!({"name":"list_topic_summaries","description":"Read summaries","inputSchema":{"type":"object","properties":{}}}),
-        json!({"name":"list_topic_assignments","description":"Read trace assignments","inputSchema":{"type":"object","properties":{}}}),
+        json!({"name":"listTopics","description":"List current live Topics","inputSchema":{"type":"object","properties":{}}}),
+        json!({"name":"listTopicRules","description":"List configured live map rules","inputSchema":{"type":"object","properties":{}}}),
+        json!({"name":"listTopicFacets","description":"List built-in Topics facets","inputSchema":{"type":"object","properties":{}}}),
+        json!({"name":"listTopicSummaries","description":"Read summaries","inputSchema":{"type":"object","properties":{}}}),
+        json!({"name":"listTopicAssignments","description":"Read trace assignments","inputSchema":{"type":"object","properties":{}}}),
     ];
-    tools.push(json!({"name":"get_trace","description":"Read a trace and observations",
+    tools.push(json!({"name":"getTrace","description":"Read a trace and observations",
         "inputSchema":{"type":"object","required":["traceId"],"properties":{"traceId":{"type":"string"}}}}));
     let result = match request["method"].as_str() {
         Some("initialize") => {
@@ -320,7 +321,7 @@ fn mcp(store: &Store, project: &str, request: &Value) -> Result<Value> {
         Some("ping") => json!({}),
         Some("tools/call") => {
             let name = request["params"]["name"].as_str().unwrap_or_default();
-            let data = if name == "get_trace" {
+            let data = if name == "getTrace" {
                 let id = arguments["traceId"]
                     .as_str()
                     .context("traceId is required")?;
@@ -334,10 +335,11 @@ fn mcp(store: &Store, project: &str, request: &Value) -> Result<Value> {
                 json!({"trace":trace.public(),"observations":observations})
             } else {
                 let resource = match name {
-                    "list_topics" => "topics",
-                    "list_topic_facets" => "topic-facets",
-                    "list_topic_summaries" => "topic-summaries",
-                    "list_topic_assignments" => "topic-assignments",
+                    "listTopics" => "topics",
+                    "listTopicFacets" => "topic-facets",
+                    "listTopicRules" => "topic-rules",
+                    "listTopicSummaries" => "topic-summaries",
+                    "listTopicAssignments" => "topic-assignments",
                     _ => {
                         return Ok(
                             json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Unknown tool"}}),

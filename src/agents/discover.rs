@@ -109,6 +109,12 @@ impl Discovery {
                         candidates.push((app.join("Contents/Resources/codex"), true));
                     }
                 }
+                Agent::KimiCode => {
+                    let app = applications.join("Kimi Code.app");
+                    if bundle_identifier(&app).as_deref() == Some("com.kimi.code.desktop") {
+                        candidates.push((app.join("Contents/MacOS/Kimi Code"), true));
+                    }
+                }
                 Agent::ClaudeCode => {
                     let app = applications.join("Claude.app");
                     candidates.push((app.join("Contents/Resources/claude"), true));
@@ -120,7 +126,7 @@ impl Discovery {
                         candidates.push((app.join("Contents/MacOS/DeepSeek Harness"), true));
                     }
                 }
-                _ => {}
+                Agent::Pi => {}
             }
         }
 
