@@ -101,6 +101,8 @@ tr:hover .row-action,tr:focus-within .row-action { opacity:1; }
 .observation:hover,.observation.selected { background:var(--accent-wash); }
 .value-block { margin-top:14px; }
 .value-block pre { margin:7px 0 0;padding:14px;border-radius:7px;background:var(--sidebar);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:350px;overflow:auto; }
+.skill-files details + details { margin-top:8px; }
+.skill-files summary { cursor:pointer;overflow-wrap:anywhere; }
 .dialog { border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:13px;width:min(500px,calc(100vw - 70px));padding:22px 24px; }
 .dialog.wide { width:min(590px,calc(100vw - 70px)); }
 .dialog::backdrop { background:var(--overlay); }

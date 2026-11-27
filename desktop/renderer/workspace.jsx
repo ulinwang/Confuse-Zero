@@ -89,6 +89,8 @@ function Registry({ kind, api, tick, refresh, providers, choices=[], filters, de
   const [version,setVersion]=useState(null);
   const [fault,setFault]=useState("");
   const spec=def[kind];
+  const versioned=kind==="prompts"||kind==="skills";
+  const files=kind==="skills" ? version?.files?.filter(file=>file.path!=="SKILL.md") : [];
   async function save(data){
     const result=await api("workspace.save",{kind,data});
     refresh();
@@ -97,12 +99,13 @@ function Registry({ kind, api, tick, refresh, providers, choices=[], filters, de
   return <>
     <div className="section-heading registry-head">{label ? <h2>{label}</h2> : <div className="toolbar-spacer"/>}<button className="subtle" onClick={()=>setEditing({})}><Plus size={15}/> New {spec.singular}</button></div>
     {(fault||error) && <p className="error" role="alert">{fault||error}</p>}
-    <table className="data-table"><thead><tr><th>{kind.endsWith("-items")?"Entry":"Name"}</th><th>Updated</th><th>{kind==="prompts"||kind==="skills"?"Labels":"Status"}</th><th></th></tr></thead>
+    <table className="data-table"><thead><tr><th>{kind.endsWith("-items")?"Entry":"Name"}</th>{versioned && <th>Version</th>}<th>Updated</th><th>{versioned?"Labels":"Status"}</th><th></th></tr></thead>
       <tbody>{rows.map(row=><tr key={row.id}>
         <td><button className="table-link" onClick={()=>onSelect ? onSelect(row) : setVersion(row)}>
           {row.name || row.traceId || (typeof row.input==="string"?row.input:JSON.stringify(row.input)) || row.id}
         </button></td>
-        <td>{time(row.updatedAt)}</td><td>{row.labels?.join(", ") || row.status || (row.version ? "v"+row.version : "—")}</td>
+        {versioned && <td>{row.version}</td>}
+        <td>{time(row.updatedAt)}</td><td>{row.labels?.join(", ") || row.status || "—"}</td>
         <td className="row-action"><button className="icon ghost" aria-label={"Edit "+spec.singular} onClick={()=>setEditing(row)}>Edit</button>
           <button className="icon ghost" aria-label={"Delete "+spec.singular} onClick={()=>setRemoving(row)}><Trash2 size={15}/></button></td>
       </tr>)}</tbody>
@@ -116,8 +119,11 @@ function Registry({ kind, api, tick, refresh, providers, choices=[], filters, de
         catch(error){setFault(error.message);setRemoving(null);}
       }}>Delete</button></footer>
     </Dialog>}
-    {version && <Dialog title={version.name||spec.singular} close={()=>setVersion(null)} wide>
+    {version && <Dialog title={versioned ? `${version.name} · v${version.version}` : version.name||spec.singular} close={()=>setVersion(null)} wide>
       <ValueBlock name={spec.singular} value={version.prompt??version.content??version}/>
+      {!!files?.length && <section className="value-block skill-files" aria-label="Supporting files">
+        {files.map(file=><details key={file.path}><summary>{file.path}</summary><pre>{file.content??file.sha256Hash}</pre></details>)}
+      </section>}
       {version.version && <form onSubmit={async event=>{
         event.preventDefault();
         const labels=String(new FormData(event.currentTarget).get("labels")).split(",").map(value=>value.trim()).filter(Boolean);
