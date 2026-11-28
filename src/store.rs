@@ -114,6 +114,16 @@ impl Store {
     }
 
     pub fn create_key(&self, project: &str, kind: &str) -> Result<ApiKey> {
+        self.create_key_with_attributes(project, kind, None, None)
+    }
+
+    pub(crate) fn create_key_with_attributes(
+        &self,
+        project: &str,
+        kind: &str,
+        note: Option<&str>,
+        expires_ns: Option<i64>,
+    ) -> Result<ApiKey> {
         let id = Uuid::new_v4().to_string();
         let public_key = format!("pk-lf-{id}");
         let secret_key = format!(
@@ -123,7 +133,7 @@ impl Store {
         );
         let display_secret_key = format!("sk-lf-…{}", &secret_key[secret_key.len() - 4..]);
         let digest = Sha256::digest(secret_key.as_bytes());
-        self.access(|conn| {
+        self.transaction(|conn| {
             conn.execute(
                 "INSERT INTO keys(id, project, kind, public, digest, display, created_ns)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -137,6 +147,12 @@ impl Store {
                     now_ns()
                 ],
             )?;
+            if note.is_some() || expires_ns.is_some() {
+                conn.execute(
+                    "INSERT INTO key_attributes(id,note,expires_ns) VALUES(?1,?2,?3)",
+                    params![id, note, expires_ns],
+                )?;
+            }
             Ok(())
         })?;
         Ok(ApiKey {
@@ -149,11 +165,17 @@ impl Store {
 
     pub fn keys(&self, project: &str) -> Result<Vec<Value>> {
         self.access(|conn| {
-            let mut stmt = conn.prepare("SELECT id, public, display, kind, created_ns FROM keys WHERE project=?1 ORDER BY created_ns")?;
+            let mut stmt = conn.prepare(
+                "SELECT keys.id, public, display, kind, created_ns, note, expires_ns
+                FROM keys LEFT JOIN key_attributes ON keys.id=key_attributes.id
+                WHERE project=?1 ORDER BY created_ns",
+            )?;
             Ok(stmt.query_map([project], |row| Ok(json!({
                 "id": row.get::<_,String>(0)?, "publicKey": row.get::<_,String>(1)?,
                 "displaySecretKey": row.get::<_,String>(2)?, "kind": row.get::<_,String>(3)?,
                 "createdAt": iso(row.get(4)?),
+                "note": row.get::<_,Option<String>>(5)?,
+                "expiresAt": row.get::<_,Option<i64>>(6)?.map(iso),
             })))?.collect::<rusqlite::Result<_>>()?)
         })
     }
@@ -167,13 +189,25 @@ impl Store {
         })
     }
 
+    pub(crate) fn set_key_note(&self, project: &str, id: &str, note: &str) -> Result<bool> {
+        self.access(|conn| {
+            Ok(conn.execute(
+                "INSERT INTO key_attributes(id,note)
+                 SELECT id,?3 FROM keys WHERE project=?1 AND id=?2 AND kind='sdk'
+                 ON CONFLICT(id) DO UPDATE SET note=excluded.note",
+                params![project, id, note],
+            )? > 0)
+        })
+    }
+
     pub fn project_for_key(&self, public: &str, secret: &str) -> Result<Option<String>> {
         let digest = Sha256::digest(secret.as_bytes());
         self.access(|conn| {
             let key: Option<(String, Vec<u8>)> = conn
                 .query_row(
-                    "SELECT project, digest FROM keys WHERE public=?1 AND kind='sdk'",
-                    [public],
+                    "SELECT project, digest FROM keys LEFT JOIN key_attributes ON keys.id=key_attributes.id
+                     WHERE public=?1 AND kind='sdk' AND (expires_ns IS NULL OR expires_ns>?2)",
+                    params![public, now_ns()],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?;
@@ -188,8 +222,9 @@ impl Store {
         self.access(|conn| {
             Ok(conn
                 .query_row(
-                    "SELECT project FROM keys WHERE digest=?1 AND kind='gateway'",
-                    [&digest[..]],
+                    "SELECT project FROM keys LEFT JOIN key_attributes ON keys.id=key_attributes.id
+                     WHERE digest=?1 AND kind='gateway' AND (expires_ns IS NULL OR expires_ns>?2)",
+                    params![&digest[..], now_ns()],
                     |row| row.get(0),
                 )
                 .optional()?)

@@ -158,7 +158,7 @@ async fn playground(store: &Store, project: &str, payload: &Value) -> Result<Val
     Ok(json!({"output":output,"traceId":trace,"usage":usage}))
 }
 
-fn queue_experiment(store: &Store, project: &str, mut data: Value) -> Result<Value> {
+pub(crate) fn queue_experiment(store: &Store, project: &str, mut data: Value) -> Result<Value> {
     let _ = required(&data, "name")?;
     let _ = store
         .resource(project, "datasets", required(&data, "datasetId")?)?
@@ -172,6 +172,18 @@ async fn experiment(store: &Store, project: &str, job: &Value) -> Result<()> {
     let id = required(job, "id")?;
     let dataset = required(job, "datasetId")?;
     let provider = store.provider(project, required(job, "provider")?)?;
+    let prompt = job["promptId"]
+        .as_str()
+        .map(|id| {
+            store
+                .resource(project, "prompts", id)?
+                .context("Experiment prompt version is unavailable")
+        })
+        .transpose()?;
+    let model = job["model"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&provider.model);
     store.put_resource(project, "experiments", json!({"id":id,"status":"Running"}))?;
     let mut complete = 0;
     let mut failures = 0;
@@ -189,12 +201,28 @@ async fn experiment(store: &Store, project: &str, job: &Value) -> Result<()> {
             complete += 1;
             continue;
         }
-        let input = item["input"]
+        let mut input = prompt
+            .as_ref()
+            .map(|prompt| &prompt["prompt"])
+            .unwrap_or(&item["input"]);
+        if input.is_null() {
+            input = &item["input"];
+        }
+        let mut input = input
             .as_str()
             .map(str::to_owned)
-            .unwrap_or_else(|| item["input"].to_string());
+            .unwrap_or_else(|| input.to_string());
+        if prompt.is_some() {
+            for (name, value) in item["input"].as_object().into_iter().flatten() {
+                let value = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| value.to_string());
+                input = input.replace(&format!("{{{{{name}}}}}"), &value);
+            }
+        }
         let start = now_ns();
-        match provider.complete(project, None, &input).await {
+        match provider.complete(project, Some(model), &input).await {
             Ok((output, usage)) => {
                 let trace = record_completion(
                     store,
@@ -202,11 +230,17 @@ async fn experiment(store: &Store, project: &str, job: &Value) -> Result<()> {
                     Completion {
                         source: "Experiment",
                         name: job["name"].as_str().unwrap_or("Experiment").to_owned(),
-                        model: Some(provider.model.clone()),
+                        model: Some(model.to_owned()),
                         input: item["input"].clone(),
                         output: json!(output),
                         usage,
                         start,
+                        prompt_name: prompt
+                            .as_ref()
+                            .and_then(|prompt| prompt["name"].as_str().map(str::to_owned)),
+                        prompt_version: prompt
+                            .as_ref()
+                            .and_then(|prompt| prompt["version"].as_i64()),
                         ..Default::default()
                     },
                 )?;

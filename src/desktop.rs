@@ -8,8 +8,15 @@ use anyhow::{Context, Result, bail};
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, env, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+    path::PathBuf,
+    time::Duration,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 
@@ -22,7 +29,22 @@ struct Request {
 }
 
 pub async fn run(store: Store, home: PathBuf) -> Result<()> {
+    let (outbound, mut output) = mpsc::channel(64);
+    let writer = tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
+        while let Some(message) = output.recv().await {
+            send(&mut stdout, message).await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    });
+    let result = serve(store, home, outbound).await;
+    let written = writer.await?;
+    result.and(written)
+}
+
+async fn serve(store: Store, home: PathBuf, outbound: mpsc::Sender<Value>) -> Result<()> {
     let mut service = Desktop::open(store.clone(), home).await?;
+    let stream_store = store.clone();
     let topic_task = tokio::spawn(crate::topics::worker(store.clone()));
     let workspace_task = tokio::spawn(crate::workspace::worker(store.clone()));
     let collector_task = tokio::spawn(async move {
@@ -44,9 +66,10 @@ pub async fn run(store: Store, home: PathBuf) -> Result<()> {
     });
 
     let mut requests = BufReader::new(tokio::io::stdin()).lines();
-    let mut output = tokio::io::stdout();
-    send(&mut output, json!({"ready":true})).await?;
-    while let Some(line) = requests.next_line().await? {
+    let mut streams: HashMap<u64, JoinHandle<()>> = HashMap::new();
+    let mut quit_id = None;
+    outbound.send(json!({"ready":true})).await?;
+    while let Ok(Some(line)) = requests.next_line().await {
         if line.len() > MAX_REQUEST_BYTES {
             break;
         }
@@ -54,26 +77,53 @@ pub async fn run(store: Store, home: PathBuf) -> Result<()> {
             continue;
         };
         if request.channel == "desktop.quit" {
-            collector_task.abort();
-            topic_task.abort();
-            workspace_task.abort();
-            if let Some(server) = service.server.take() {
-                server.stop().await;
+            quit_id = Some(request.id);
+            break;
+        }
+        if request.channel == "langfuse.cancel-playground" {
+            if let Some(id) = request.payload["id"].as_u64()
+                && let Some(task) = streams.remove(&id)
+            {
+                task.abort();
             }
-            send(&mut output, json!({"id":request.id,"result":true})).await?;
-            return Ok(());
+            continue;
+        }
+        if request.channel == "langfuse.playground" {
+            streams.retain(|_, task| !task.is_finished());
+            if streams.len() >= 4 || streams.contains_key(&request.id) {
+                let _ = outbound.send(json!({"id":request.id,"stream":"error","message":"Too many active Playground requests"})).await;
+                continue;
+            }
+            streams.insert(
+                request.id,
+                tokio::spawn(crate::langfuse::playground::run(
+                    stream_store.clone(),
+                    request.id,
+                    request.payload,
+                    outbound.clone(),
+                )),
+            );
+            continue;
         }
         let value = match service.handle(&request.channel, &request.payload).await {
             Ok(result) => json!({"id":request.id,"result":result}),
             Err(error) => json!({"id":request.id,"error":error.to_string()}),
         };
-        send(&mut output, value).await?;
+        if outbound.send(value).await.is_err() {
+            break;
+        }
+    }
+    for (_, stream) in streams {
+        stream.abort();
     }
     collector_task.abort();
     topic_task.abort();
     workspace_task.abort();
     if let Some(server) = service.server.take() {
         server.stop().await;
+    }
+    if let Some(id) = quit_id {
+        outbound.send(json!({"id":id,"result":true})).await?;
     }
     Ok(())
 }
@@ -115,6 +165,11 @@ impl Desktop {
     }
 
     async fn handle(&mut self, channel: &str, payload: &Value) -> Result<Value> {
+        match channel {
+            "langfuse.session" => return crate::langfuse::session(&self.store),
+            "langfuse.request" => return crate::langfuse::request(&self.store, payload).await,
+            _ => {}
+        }
         let project = payload
             .get("project")
             .and_then(Value::as_str)

@@ -1,0 +1,542 @@
+{
+  "aiGateway.getConfig": [
+    "query",
+    "organization"
+  ],
+  "aiGateway.getOverviewConfig": [
+    "query",
+    "organization"
+  ],
+  "aiGateway.getSetupStatus": [
+    "query",
+    "organization"
+  ],
+  "aiGateway.updateConfig": [
+    "mutation",
+    "organization"
+  ],
+  "backgroundMigrations.status": [
+    "query",
+    "application"
+  ],
+  "dashboard.allDashboards": [
+    "query",
+    "project"
+  ],
+  "dashboard.chart": [
+    "query",
+    "project"
+  ],
+  "dashboard.cloneDashboard": [
+    "mutation",
+    "project"
+  ],
+  "dashboard.createDashboard": [
+    "mutation",
+    "project"
+  ],
+  "dashboard.delete": [
+    "mutation",
+    "project"
+  ],
+  "dashboard.executeQuery": [
+    "query",
+    "project"
+  ],
+  "dashboard.getDashboard": [
+    "query",
+    "project"
+  ],
+  "dashboard.getHomeDashboard": [
+    "query",
+    "project"
+  ],
+  "dashboard.setHomeDashboard": [
+    "mutation",
+    "project"
+  ],
+  "dashboard.updateDashboardDefinition": [
+    "mutation",
+    "project"
+  ],
+  "dashboard.updateDashboardFilters": [
+    "mutation",
+    "project"
+  ],
+  "dashboard.updateDashboardMetadata": [
+    "mutation",
+    "project"
+  ],
+  "datasets.allDatasetMeta": [
+    "query",
+    "project"
+  ],
+  "datasets.allDatasets": [
+    "query",
+    "project"
+  ],
+  "datasets.allDatasetsMetrics": [
+    "query",
+    "project"
+  ],
+  "datasets.allNamesAndIds": [
+    "query",
+    "project"
+  ],
+  "datasets.baseRunDataByDatasetId": [
+    "query",
+    "project"
+  ],
+  "datasets.byId": [
+    "query",
+    "project"
+  ],
+  "datasets.countItemsByDatasetId": [
+    "query",
+    "project"
+  ],
+  "datasets.createDataset": [
+    "mutation",
+    "project"
+  ],
+  "datasets.createDatasetItem": [
+    "mutation",
+    "project"
+  ],
+  "datasets.deleteDatasetItem": [
+    "mutation",
+    "project"
+  ],
+  "datasets.hasAny": [
+    "query",
+    "project"
+  ],
+  "datasets.itemById": [
+    "query",
+    "project"
+  ],
+  "datasets.itemByIdAtVersion": [
+    "query",
+    "project"
+  ],
+  "datasets.itemsByDatasetId": [
+    "query",
+    "project"
+  ],
+  "datasets.listDatasetVersions": [
+    "query",
+    "project"
+  ],
+  "datasets.runById": [
+    "query",
+    "project"
+  ],
+  "datasets.runItemsByItemId": [
+    "query",
+    "project"
+  ],
+  "datasets.runItemsByRunId": [
+    "query",
+    "project"
+  ],
+  "datasets.runsByDatasetId": [
+    "query",
+    "project"
+  ],
+  "datasets.updateDataset": [
+    "mutation",
+    "project"
+  ],
+  "datasets.updateDatasetItem": [
+    "mutation",
+    "project"
+  ],
+  "events.all": [
+    "query",
+    "project"
+  ],
+  "events.batchIO": [
+    "query",
+    "project"
+  ],
+  "events.byTraceId": [
+    "query",
+    "project"
+  ],
+  "events.countAll": [
+    "query",
+    "project"
+  ],
+  "events.filterOptions": [
+    "query",
+    "project"
+  ],
+  "events.scoresForTrace": [
+    "query",
+    "project"
+  ],
+  "experiments.all": [
+    "query",
+    "project"
+  ],
+  "experiments.byId": [
+    "query",
+    "project"
+  ],
+  "experiments.countAll": [
+    "query",
+    "project"
+  ],
+  "experiments.createExperiment": [
+    "mutation",
+    "project"
+  ],
+  "experiments.mostRecent": [
+    "query",
+    "project"
+  ],
+  "experiments.validateConfig": [
+    "query",
+    "project"
+  ],
+  "llmApiKey.all": [
+    "query",
+    "project"
+  ],
+  "llmApiKey.create": [
+    "mutation",
+    "project"
+  ],
+  "llmApiKey.delete": [
+    "mutation",
+    "project"
+  ],
+  "llmApiKey.effective": [
+    "query",
+    "project"
+  ],
+  "llmApiKey.inherited": [
+    "query",
+    "project"
+  ],
+  "llmApiKey.update": [
+    "mutation",
+    "project"
+  ],
+  "observations.byId": [
+    "query",
+    "project"
+  ],
+  "organizations.lastTraceByProject": [
+    "query",
+    "organization"
+  ],
+  "projectApiKeys.byProjectId": [
+    "query",
+    "project"
+  ],
+  "projectApiKeys.create": [
+    "mutation",
+    "project"
+  ],
+  "projectApiKeys.delete": [
+    "mutation",
+    "project"
+  ],
+  "projectApiKeys.updateName": [
+    "mutation",
+    "project"
+  ],
+  "projects.create": [
+    "mutation",
+    "organization"
+  ],
+  "projects.environmentFilterOptions": [
+    "query",
+    "project"
+  ],
+  "projects.update": [
+    "mutation",
+    "project"
+  ],
+  "projects.visit": [
+    "mutation",
+    "project"
+  ],
+  "prompts.all": [
+    "query",
+    "project"
+  ],
+  "prompts.allLabels": [
+    "query",
+    "project"
+  ],
+  "prompts.allNames": [
+    "query",
+    "project"
+  ],
+  "prompts.allVersions": [
+    "query",
+    "project"
+  ],
+  "prompts.byId": [
+    "query",
+    "project"
+  ],
+  "prompts.count": [
+    "query",
+    "project"
+  ],
+  "prompts.create": [
+    "mutation",
+    "project"
+  ],
+  "prompts.deleteVersion": [
+    "mutation",
+    "project"
+  ],
+  "prompts.duplicatePrompt": [
+    "mutation",
+    "project"
+  ],
+  "prompts.filterOptions": [
+    "query",
+    "project"
+  ],
+  "prompts.getPromptLinkOptions": [
+    "query",
+    "project"
+  ],
+  "prompts.getProtectedLabels": [
+    "query",
+    "project"
+  ],
+  "prompts.hasAny": [
+    "query",
+    "project"
+  ],
+  "prompts.setLabels": [
+    "mutation",
+    "project"
+  ],
+  "public.checkUpdate": [
+    "query",
+    "application"
+  ],
+  "public.markdownRenderConfig": [
+    "query",
+    "application"
+  ],
+  "public.traceReadConfig": [
+    "query",
+    "application"
+  ],
+  "public.tracingSearchConfig": [
+    "query",
+    "project"
+  ],
+  "scores.getScoreColumns": [
+    "query",
+    "project"
+  ],
+  "sessions.all": [
+    "query",
+    "project"
+  ],
+  "sessions.allFromEvents": [
+    "query",
+    "project"
+  ],
+  "sessions.countAll": [
+    "query",
+    "project"
+  ],
+  "sessions.countAllFromEvents": [
+    "query",
+    "project"
+  ],
+  "sessions.hasAny": [
+    "query",
+    "project"
+  ],
+  "sessions.hasAnyFromEvents": [
+    "query",
+    "project"
+  ],
+  "skills.all": [
+    "query",
+    "project"
+  ],
+  "skills.byName": [
+    "query",
+    "project"
+  ],
+  "skills.createVersion": [
+    "mutation",
+    "project"
+  ],
+  "skills.deleteSkill": [
+    "mutation",
+    "project"
+  ],
+  "skills.deleteVersion": [
+    "mutation",
+    "project"
+  ],
+  "skills.fileContents": [
+    "query",
+    "project"
+  ],
+  "skills.filterOptions": [
+    "query",
+    "project"
+  ],
+  "skills.setLabels": [
+    "mutation",
+    "project"
+  ],
+  "skills.setTags": [
+    "mutation",
+    "project"
+  ],
+  "skills.skillVersions": [
+    "query",
+    "project"
+  ],
+  "topics.analysisResults": [
+    "query",
+    "project"
+  ],
+  "topics.currentResults": [
+    "query",
+    "project"
+  ],
+  "topics.execution": [
+    "query",
+    "project"
+  ],
+  "topics.executionCostBreakdown": [
+    "query",
+    "project"
+  ],
+  "topics.executionCosts": [
+    "query",
+    "project"
+  ],
+  "topics.executions": [
+    "query",
+    "project"
+  ],
+  "topics.facets": [
+    "query",
+    "project"
+  ],
+  "topics.forTrace": [
+    "query",
+    "project"
+  ],
+  "topics.forTraces": [
+    "query",
+    "project"
+  ],
+  "topics.hasCurrentEmbeddings": [
+    "query",
+    "project"
+  ],
+  "topics.map": [
+    "query",
+    "project"
+  ],
+  "topics.mapMatches": [
+    "query",
+    "project"
+  ],
+  "topics.maps": [
+    "query",
+    "project"
+  ],
+  "topics.modelSettings": [
+    "query",
+    "project"
+  ],
+  "topics.previewAnalysis": [
+    "query",
+    "project"
+  ],
+  "topics.previewTraces": [
+    "query",
+    "project"
+  ],
+  "topics.refreshRuleMap": [
+    "mutation",
+    "project"
+  ],
+  "topics.retry": [
+    "mutation",
+    "project"
+  ],
+  "topics.ruleMapCosts": [
+    "query",
+    "project"
+  ],
+  "topics.ruleSetupStatus": [
+    "query",
+    "project"
+  ],
+  "topics.setRuleEnabled": [
+    "mutation",
+    "project"
+  ],
+  "topics.setupTraceCounts": [
+    "query",
+    "project"
+  ],
+  "topics.setupTraceNames": [
+    "query",
+    "project"
+  ],
+  "topics.startRuleSetup": [
+    "mutation",
+    "project"
+  ],
+  "topics.traces": [
+    "query",
+    "project"
+  ],
+  "topics.tracingReadinessSettings": [
+    "query",
+    "project"
+  ],
+  "traces.all": [
+    "query",
+    "project"
+  ],
+  "traces.byId": [
+    "query",
+    "project"
+  ],
+  "traces.byIdWithObservationsAndScores": [
+    "query",
+    "project"
+  ],
+  "traces.countAll": [
+    "query",
+    "project"
+  ],
+  "traces.deleteMany": [
+    "mutation",
+    "project"
+  ],
+  "traces.filterOptions": [
+    "query",
+    "project"
+  ],
+  "traces.hasTracingConfigured": [
+    "query",
+    "project"
+  ],
+  "traces.metrics": [
+    "query",
+    "project"
+  ]
+}

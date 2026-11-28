@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS keys(
     kind TEXT NOT NULL, public TEXT UNIQUE NOT NULL, digest BLOB UNIQUE NOT NULL,
     display TEXT NOT NULL, created_ns INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS key_attributes(
+    id TEXT PRIMARY KEY REFERENCES keys(id) ON DELETE CASCADE,
+    note TEXT, expires_ns INTEGER
+);
 CREATE TABLE IF NOT EXISTS traces(
     project TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, id TEXT NOT NULL,
     session TEXT, name TEXT NOT NULL, user_id TEXT, source TEXT NOT NULL, start_ns INTEGER NOT NULL,
