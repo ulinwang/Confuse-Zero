@@ -1,4 +1,48 @@
 {
+  "TableViewPresets.clearDefault": [
+    "mutation",
+    "project"
+  ],
+  "TableViewPresets.create": [
+    "mutation",
+    "project"
+  ],
+  "TableViewPresets.delete": [
+    "mutation",
+    "project"
+  ],
+  "TableViewPresets.generatePermalink": [
+    "mutation",
+    "project"
+  ],
+  "TableViewPresets.getById": [
+    "query",
+    "project"
+  ],
+  "TableViewPresets.getByTableName": [
+    "query",
+    "project"
+  ],
+  "TableViewPresets.getDefault": [
+    "query",
+    "project"
+  ],
+  "TableViewPresets.getDefaultAssignments": [
+    "query",
+    "project"
+  ],
+  "TableViewPresets.setAsDefault": [
+    "mutation",
+    "project"
+  ],
+  "TableViewPresets.update": [
+    "mutation",
+    "project"
+  ],
+  "TableViewPresets.updateName": [
+    "mutation",
+    "project"
+  ],
   "aiGateway.getConfig": [
     "query",
     "organization"
@@ -18,6 +62,37 @@
   "backgroundMigrations.status": [
     "query",
     "application"
+  ],
+  "comments.create": [
+    "mutation",
+    "project"
+  ],
+  "comments.delete": [
+    "mutation",
+    "project"
+  ],
+  "comments.getByObjectId": [
+    "query",
+    "project"
+  ],
+  "comments.getCountByObjectId": [
+    "query",
+    "project",
+    "map"
+  ],
+  "comments.getCountByObjectType": [
+    "query",
+    "project",
+    "map"
+  ],
+  "comments.getTraceCommentCountsBySessionId": [
+    "query",
+    "project",
+    "map"
+  ],
+  "comments.getTraceCommentsBySessionId": [
+    "query",
+    "project"
   ],
   "dashboard.allDashboards": [
     "query",
@@ -171,6 +246,10 @@
     "query",
     "project"
   ],
+  "events.getSdkVersionInfo": [
+    "query",
+    "project"
+  ],
   "events.scoresForTrace": [
     "query",
     "project"
@@ -291,6 +370,10 @@
     "mutation",
     "project"
   ],
+  "prompts.delete": [
+    "mutation",
+    "project"
+  ],
   "prompts.deleteVersion": [
     "mutation",
     "project"
@@ -315,6 +398,14 @@
     "query",
     "project"
   ],
+  "prompts.metrics": [
+    "query",
+    "project"
+  ],
+  "prompts.resolvePromptGraph": [
+    "query",
+    "project"
+  ],
   "prompts.setLabels": [
     "mutation",
     "project"
@@ -335,8 +426,80 @@
     "query",
     "project"
   ],
+  "scoreConfigs.all": [
+    "query",
+    "project"
+  ],
+  "scoreConfigs.byId": [
+    "query",
+    "project"
+  ],
+  "scoreConfigs.create": [
+    "mutation",
+    "project"
+  ],
+  "scoreConfigs.update": [
+    "mutation",
+    "project"
+  ],
+  "scores.all": [
+    "query",
+    "project"
+  ],
+  "scores.allFromEvents": [
+    "query",
+    "project"
+  ],
+  "scores.byId": [
+    "query",
+    "project"
+  ],
+  "scores.countAll": [
+    "query",
+    "project"
+  ],
+  "scores.countAllFromEvents": [
+    "query",
+    "project"
+  ],
+  "scores.createAnnotationScore": [
+    "mutation",
+    "project"
+  ],
+  "scores.deleteAnnotationScore": [
+    "mutation",
+    "project"
+  ],
+  "scores.deleteMany": [
+    "mutation",
+    "project"
+  ],
+  "scores.filterOptions": [
+    "query",
+    "project"
+  ],
+  "scores.filterOptionsFromEvents": [
+    "query",
+    "project"
+  ],
   "scores.getScoreColumns": [
     "query",
+    "project"
+  ],
+  "scores.getScoreMetadataById": [
+    "query",
+    "project"
+  ],
+  "scores.hasAny": [
+    "query",
+    "project"
+  ],
+  "scores.metricsFromEvents": [
+    "query",
+    "project"
+  ],
+  "scores.updateAnnotationScore": [
+    "mutation",
     "project"
   ],
   "sessions.all": [
@@ -344,6 +507,18 @@
     "project"
   ],
   "sessions.allFromEvents": [
+    "query",
+    "project"
+  ],
+  "sessions.bookmark": [
+    "mutation",
+    "project"
+  ],
+  "sessions.byIdWithScores": [
+    "query",
+    "project"
+  ],
+  "sessions.byIdWithScoresFromEvents": [
     "query",
     "project"
   ],
@@ -355,11 +530,43 @@
     "query",
     "project"
   ],
+  "sessions.filterOptions": [
+    "query",
+    "project"
+  ],
+  "sessions.filterOptionsFromEvents": [
+    "query",
+    "project"
+  ],
   "sessions.hasAny": [
     "query",
     "project"
   ],
   "sessions.hasAnyFromEvents": [
+    "query",
+    "project"
+  ],
+  "sessions.metrics": [
+    "query",
+    "project"
+  ],
+  "sessions.metricsFromEvents": [
+    "query",
+    "project"
+  ],
+  "sessions.observationFullIOFromEvents": [
+    "query",
+    "project"
+  ],
+  "sessions.observationsForTraceFromEvents": [
+    "query",
+    "project"
+  ],
+  "sessions.previewTree": [
+    "query",
+    "project"
+  ],
+  "sessions.tracesFromEvents": [
     "query",
     "project"
   ],
@@ -407,6 +614,10 @@
     "query",
     "project"
   ],
+  "topics.costEstimate": [
+    "query",
+    "project"
+  ],
   "topics.currentResults": [
     "query",
     "project"
@@ -428,6 +639,10 @@
     "project"
   ],
   "topics.facets": [
+    "query",
+    "project"
+  ],
+  "topics.filterOptions": [
     "query",
     "project"
   ],
@@ -483,6 +698,22 @@
     "query",
     "project"
   ],
+  "topics.saveFacet": [
+    "mutation",
+    "project"
+  ],
+  "topics.saveRule": [
+    "mutation",
+    "project"
+  ],
+  "topics.saveSetup": [
+    "mutation",
+    "project"
+  ],
+  "topics.setAutomaticProcessing": [
+    "mutation",
+    "project"
+  ],
   "topics.setRuleEnabled": [
     "mutation",
     "project"
@@ -495,7 +726,23 @@
     "query",
     "project"
   ],
+  "topics.startAnalysis": [
+    "mutation",
+    "project"
+  ],
+  "topics.startCostEstimate": [
+    "mutation",
+    "project"
+  ],
   "topics.startRuleSetup": [
+    "mutation",
+    "project"
+  ],
+  "topics.stripeMap": [
+    "query",
+    "project"
+  ],
+  "topics.testModelSettings": [
     "mutation",
     "project"
   ],

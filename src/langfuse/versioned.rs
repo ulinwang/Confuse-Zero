@@ -2,7 +2,7 @@ use super::{
     fail,
     tracing::{includes, paginate},
 };
-use crate::{desktop::required, resources::string_list, skills, store::Store};
+use crate::{desktop::required, model::parse_time, resources::string_list, skills, store::Store};
 use anyhow::{Context, Result, bail};
 use rusqlite::params;
 use serde_json::{Value, json};
@@ -14,6 +14,50 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
         "prompts.byId" => store
             .resource(project, "prompts", required(input, "id")?)?
             .unwrap_or(Value::Null),
+        "prompts.resolvePromptGraph" => {
+            let id = required(input, "promptId")?;
+            let parent = store
+                .resource(project, "prompts", id)?
+                .filter(|row| row["id"] == id)
+                .ok_or_else(|| fail("NOT_FOUND", "Prompt version not found"))?;
+            let mut graph = PromptGraph {
+                root_name: required(&parent, "name")?,
+                active: BTreeSet::new(),
+                dependencies: BTreeMap::new(),
+                visited: 0,
+                size: 0,
+            };
+            let replacement = resolve_prompt(store, project, &parent, &mut graph, 0)?;
+            json!({"resolvedPrompt":replacement,"graph":(!graph.dependencies.is_empty()).then(||json!({
+                "root":prompt_ref(&parent),"dependencies":graph.dependencies,
+            }))})
+        }
+        "prompts.metrics" => {
+            let names = string_list(&input["promptNames"]);
+            if names.len() > 50 {
+                bail!("Choose up to 50 prompts");
+            }
+            let mut counts = BTreeMap::new();
+            let from = parse_time(&input["fromTimestamp"]);
+            let to = parse_time(&input["toTimestamp"]);
+            for obs in store
+                .observations(project, None, None, i64::MAX as usize, 0)?
+                .0
+            {
+                if let Some(name) = obs.prompt_name.filter(|name| names.contains(name))
+                    && from.is_none_or(|from| obs.start_ns >= from)
+                    && to.is_none_or(|to| obs.start_ns < to)
+                {
+                    *counts.entry(name).or_insert(0_u64) += 1;
+                }
+            }
+            json!(
+                counts
+                    .into_iter()
+                    .map(|(name, count)| json!({"promptName":name,"observationCount":count}))
+                    .collect::<Vec<_>>()
+            )
+        }
         "prompts.all" | "prompts.count" => {
             let rows = store.resources(project, "prompts")?;
             let rows = prompt_list(rows, input)?;
@@ -132,8 +176,9 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
         }
         "prompts.getProtectedLabels" => json!([]),
         "prompts.deleteVersion" => {
-            let id = input["promptId"]
+            let id = input["promptVersionId"]
                 .as_str()
+                .or(input["promptId"].as_str())
                 .or_else(|| input["id"].as_str())
                 .context("Prompt version ID is required")?;
             if !delete_version(store, project, "prompts", id)? {
@@ -142,10 +187,10 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
             json!({ "success": true })
         }
         "prompts.duplicatePrompt" => {
-            let original =
-                required(input, "originalPromptName").or_else(|_| required(input, "sourceName"))?;
-            let new_name =
-                required(input, "newPromptName").or_else(|_| required(input, "newName"))?;
+            let original = store
+                .resource(project, "prompts", required(input, "promptId")?)?
+                .ok_or_else(|| fail("NOT_FOUND", "Prompt version not found"))?;
+            let new_name = required(input, "name")?;
             validate_prompt_name(new_name)?;
             if store
                 .versioned(project, "prompts", new_name, None, Some("latest"))?
@@ -153,22 +198,29 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
             {
                 return Err(fail("CONFLICT", "Prompt name already exists"));
             }
-            let mut row = store
-                .versioned(
-                    project,
-                    "prompts",
-                    original,
-                    input["version"].as_i64(),
-                    None,
-                )?
-                .ok_or_else(|| fail("NOT_FOUND", "Prompt version not found"))?;
-            row["name"] = json!(new_name);
-            row["labels"] = json!([]);
-            row.as_object_mut()
-                .expect("prompt is an object")
-                .remove("id");
-            store.put_resource(project, "prompts", row)?
+            let mut versions = if input["isSingleVersion"] == true {
+                vec![original]
+            } else {
+                store
+                    .resources(project, "prompts")?
+                    .into_iter()
+                    .filter(|row| row["name"] == original["name"])
+                    .collect()
+            };
+            versions.sort_by_key(|row| row["version"].as_i64());
+            let mut latest = Value::Null;
+            for mut row in versions {
+                row["name"] = json!(new_name);
+                row["labels"] = json!([]);
+                row["createdBy"] = json!("confuse-local");
+                if let Some(fields) = row.as_object_mut() {
+                    fields.remove("id");
+                }
+                latest = store.put_resource(project, "prompts", row)?;
+            }
+            latest
         }
+        "prompts.delete" => delete_prompts(store, project, input)?,
         "skills.byName" => {
             let row = store
                 .versioned(
@@ -398,4 +450,166 @@ fn delete_version(store: &Store, project: &str, kind: &str, id: &str) -> Result<
         }
         Ok(removed)
     })
+}
+
+const PROMPT_REFERENCE: &str = "@@@langfusePrompt:name=";
+
+struct PromptGraph<'a> {
+    root_name: &'a str,
+    active: BTreeSet<String>,
+    dependencies: BTreeMap<String, Vec<Value>>,
+    visited: usize,
+    size: usize,
+}
+
+fn prompt_ref(prompt: &Value) -> Value {
+    json!({"id":prompt["id"],"name":prompt["name"],"version":prompt["version"]})
+}
+
+fn resolve_prompt(
+    store: &Store,
+    project: &str,
+    prompt: &Value,
+    graph: &mut PromptGraph<'_>,
+    depth: usize,
+) -> Result<Value> {
+    let id = required(prompt, "id")?;
+    graph.visited += 1;
+    if depth >= 5 || graph.visited > 500 {
+        return Err(fail(
+            "CONFLICT",
+            "Prompt dependencies exceed the resolution limit",
+        ));
+    }
+    if (depth > 0 && prompt["name"] == graph.root_name) || !graph.active.insert(id.to_owned()) {
+        return Err(fail("CONFLICT", "Circular prompt dependency"));
+    }
+    let mut resolved = prompt["prompt"].clone();
+    resolve_fields(store, project, &mut resolved, id, graph, depth)?;
+    graph.active.remove(id);
+    Ok(resolved)
+}
+
+fn resolve_fields(
+    store: &Store,
+    project: &str,
+    value: &mut Value,
+    parent: &str,
+    graph: &mut PromptGraph<'_>,
+    depth: usize,
+) -> Result<()> {
+    match value {
+        Value::String(text) => {
+            let mut result = String::new();
+            let mut remaining = text.as_str();
+            while let Some((before, tail)) = remaining.split_once(PROMPT_REFERENCE) {
+                result.push_str(before);
+                let Some((reference, after)) = tail.split_once("@@@") else {
+                    result.push_str(PROMPT_REFERENCE);
+                    remaining = tail;
+                    break;
+                };
+                remaining = after;
+                let Some((name, target)) = reference.rsplit_once('|') else {
+                    result.push_str(PROMPT_REFERENCE);
+                    result.push_str(reference);
+                    result.push_str("@@@");
+                    continue;
+                };
+                let version = target
+                    .strip_prefix("version=")
+                    .and_then(|version| version.parse::<i64>().ok());
+                let label = target.strip_prefix("label=");
+                if version.is_none() && label.is_none() {
+                    bail!("Invalid prompt dependency");
+                }
+                let child = store
+                    .versioned(project, "prompts", name, version, label)?
+                    .ok_or_else(|| {
+                        fail(
+                            "CONFLICT",
+                            format!("Prompt dependency {name} was not found"),
+                        )
+                    })?;
+                let edge = prompt_ref(&child);
+                let edges = graph.dependencies.entry(parent.to_owned()).or_default();
+                if !edges.contains(&edge) {
+                    edges.push(edge);
+                }
+                let resolved = resolve_prompt(store, project, &child, graph, depth + 1)?;
+                result.push_str(
+                    resolved
+                        .as_str()
+                        .ok_or_else(|| fail("CONFLICT", "A prompt dependency must contain text"))?,
+                );
+            }
+            result.push_str(remaining);
+            graph.size = graph.size.saturating_add(result.len());
+            if graph.size > 10_000_000 {
+                return Err(fail("CONFLICT", "Resolved prompt exceeds the size limit"));
+            }
+            *text = result;
+        }
+        Value::Array(values) => {
+            for value in values {
+                resolve_fields(store, project, value, parent, graph, depth)?;
+            }
+        }
+        Value::Object(fields) => {
+            for value in fields.values_mut() {
+                resolve_fields(store, project, value, parent, graph, depth)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn delete_prompts(store: &Store, project: &str, input: &Value) -> Result<Value> {
+    let name = input["promptName"].as_str().filter(|name| !name.is_empty());
+    let path = input["pathPrefix"]
+        .as_str()
+        .filter(|path| !path.is_empty())
+        .map(|path| format!("{}/", path.trim_end_matches('/')));
+    if name.is_none() && path.is_none() {
+        bail!("Choose a prompt or folder");
+    }
+    let rows = store.resources(project, "prompts")?;
+    let names = rows
+        .iter()
+        .filter_map(|row| {
+            let value = row["name"].as_str()?;
+            (name == Some(value) || path.as_ref().is_some_and(|path| value.starts_with(path)))
+                .then_some(value)
+        })
+        .collect::<BTreeSet<_>>();
+    if rows
+        .iter()
+        .filter(|row| {
+            row["name"]
+                .as_str()
+                .is_some_and(|name| !names.contains(name))
+        })
+        .any(|row| {
+            let text = row["prompt"].to_string();
+            names
+                .iter()
+                .any(|name| text.contains(&format!("{PROMPT_REFERENCE}{name}|")))
+        })
+    {
+        return Err(fail(
+            "CONFLICT",
+            "A prompt outside this selection depends on a selected prompt",
+        ));
+    }
+    store.transaction(|tx| {
+        for name in &names {
+            tx.execute(
+                "DELETE FROM resources WHERE project=?1 AND kind='prompts' AND name=?2",
+                params![project, name],
+            )?;
+        }
+        Ok(())
+    })?;
+    Ok(json!({"deletedNames":names}))
 }

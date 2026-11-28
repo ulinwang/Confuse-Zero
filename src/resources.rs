@@ -28,7 +28,10 @@ pub const KINDS: &[&str] = &[
     "dashboard-widgets",
     "alerts",
     "exports",
+    "table-view-presets",
     "topic-maps",
+    "topic-facets",
+    "topic-cost-estimates",
     "topic-runs",
     "topic-publications",
 ];

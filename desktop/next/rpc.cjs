@@ -85,7 +85,7 @@ async function execute(backend, name, method, payload) {
   try {
     const procedure = Object.hasOwn(procedures, name) ? procedures[name] : null;
     if (!procedure) throw new ProcedureError("NOT_IMPLEMENTED", "Workspace procedure is unavailable: " + name);
-    const [type, scope] = procedure;
+    const [type, scope, output] = procedure;
     if (type === "mutation" && method !== "POST") {
       throw new ProcedureError("METHOD_NOT_SUPPORTED", "Use POST for workspace changes");
     }
@@ -102,7 +102,7 @@ async function execute(backend, name, method, payload) {
     const result = await backend.request("langfuse.request", { procedure: name, input });
     if (result.error) throw new ProcedureError(Object.hasOwn(trpcCodes, result.error.code) ? result.error.code : "INTERNAL_SERVER_ERROR", result.error.message);
     const { data, dates } = result;
-    const values = dates.length ? Object.fromEntries(dates.map(key => [key, ["Date"]])) : undefined;
+    const values = output === "map" ? ["map"] : dates.length ? Object.fromEntries(dates.map(key => [key, ["Date"]])) : undefined;
     return {
       httpStatus: 200,
       body: { result: { data: { json: data, ...(values ? { meta: { values, v: 1 } } : {}) } } },

@@ -1,10 +1,10 @@
-use super::{fail, tracing::includes};
+use super::{fail, topic_setup, tracing::includes};
 use crate::{
     desktop::required,
     model::{Trace, TraceFilter, iso, now_ns, parse_time},
     resources::string_list,
     store::Store,
-    topics::{self, FACETS},
+    topics,
 };
 use anyhow::{Context, Result, bail};
 use rusqlite::params;
@@ -16,12 +16,16 @@ const RUNS: &str = "topic-runs";
 const DAY: i64 = 86_400_000_000_000;
 const SECOND: i64 = 1_000_000_000;
 
-pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -> Result<Value> {
+pub(super) async fn request(
+    store: &Store,
+    project: &str,
+    name: &str,
+    input: &Value,
+) -> Result<Value> {
     let result = match name {
-        "topics.facets" => json!(FACETS.iter().map(|(id, name, prompt)| json!({
-            "id": id, "projectId": project, "name": name, "description": prompt, "isBuiltIn": true,
-            "versions": [{ "projectId": project, "facetId": id, "version": 1, "prompt": prompt }],
-        })).collect::<Vec<_>>()),
+        "topics.facets" => json!(topics::facet_versions(store, project)?),
+        "topics.filterOptions" => filter_options(store, project)?,
+        "topics.stripeMap" => stripe_map(store, project, required(input, "facet")?)?,
         "topics.maps" => {
             let mut rules = Vec::new();
             let mut analyses = Vec::new();
@@ -126,20 +130,38 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
             for trace in ids {
                 let id = required(trace, "traceId")?;
                 if store.trace(project, id)?.is_some() {
-                    data.insert(id, trace_facets(store, project, id)?);
+                    let facets = trace_facets(store, project, id)?;
+                    let mut values = BTreeMap::<(String, Option<String>), Vec<String>>::new();
+                    for facet in facets.as_array().into_iter().flatten() {
+                        let key = (
+                            required(facet, "name")?.to_owned(),
+                            facet["topicName"].as_str().map(str::to_owned),
+                        );
+                        values
+                            .entry(key)
+                            .or_default()
+                            .push(required(facet, "runId")?.to_owned());
+                    }
+                    if !values.is_empty() {
+                        data.insert(
+                            id,
+                            values
+                                .into_iter()
+                                .map(|((facet, topic), runs)| {
+                                    json!({
+                                        "facet":facet,"topic":topic,"runIds":runs,
+                                    })
+                                })
+                                .collect::<Vec<_>>(),
+                        );
+                    }
                 }
             }
             json!(data)
         }
-        "topics.modelSettings" => model_settings(store, project)?,
+        "topics.modelSettings" => topic_setup::config(store, project)?,
         "topics.tracingReadinessSettings" => {
-            let readiness = store
-                .resources(project, MAPS)?
-                .into_iter()
-                .find(|map| map["mode"] == "live")
-                .and_then(|map| map["readinessSeconds"].as_u64())
-                .unwrap_or(300);
-            json!({ "traceIdleMs": readiness * 1_000 })
+            json!({ "traceIdleMs": topic_setup::config(store, project)?["traceIdleMs"].as_u64().unwrap_or(300_000) })
         }
         "topics.hasCurrentEmbeddings" => json!(has_summaries(store, project)?),
         "topics.executions" => {
@@ -229,7 +251,9 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
             } else {
                 "refresh"
             };
-            if name == "topics.startRuleSetup" && map["enabled"] == false {
+            if name == "topics.startRuleSetup"
+                && (map["enabled"] == false || !topic_setup::processing_enabled(store, project)?)
+            {
                 Value::Null
             } else {
                 rule(&topics::change(store, project, id, action)?)
@@ -249,17 +273,12 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
             topics::change(store, project, required(&map, "id")?, "refresh")?;
             Value::Null
         }
-        _ => {
-            return Err(fail(
-                "NOT_IMPLEMENTED",
-                format!("Workspace procedure is unavailable: {name}"),
-            ));
-        }
+        _ => topic_setup::request(store, project, name, input).await?,
     };
     Ok(result)
 }
 
-fn get_map(store: &Store, project: &str, id: &str) -> Result<Value> {
+pub(super) fn get_map(store: &Store, project: &str, id: &str) -> Result<Value> {
     store
         .resource(project, MAPS, id)?
         .ok_or_else(|| fail("NOT_FOUND", "Topic map not found"))
@@ -291,7 +310,7 @@ fn map_filters(map: &Value) -> Value {
         .unwrap_or(json!([]))
 }
 
-fn rule(map: &Value) -> Value {
+pub(super) fn rule(map: &Value) -> Value {
     json!({
         "id": map["id"], "projectId": map["projectId"], "name": map["name"], "createdAt": map["createdAt"],
         "updatedAt": map["updatedAt"], "facetIds": map["facetIds"], "filter": map_filters(map),
@@ -320,7 +339,9 @@ fn has_summaries(store: &Store, project: &str) -> Result<bool> {
 fn facet_results(store: &Store, project: &str, map: &Value) -> Result<Vec<Value>> {
     let map_id = required(map, "id")?;
     let mut facets = Vec::new();
-    for (id, name, _) in FACETS {
+    for definition in topics::facet_versions(store, project)? {
+        let id = required(&definition, "id")?;
+        let name = &definition["name"];
         if !string_list(&map["facetIds"])
             .iter()
             .any(|facet| facet == id)
@@ -343,7 +364,7 @@ fn facet_results(store: &Store, project: &str, map: &Value) -> Result<Vec<Value>
         })).collect::<Vec<_>>();
         let published = !data["publishedAt"].is_null();
         facets.push(json!({
-            "facetId": id, "name": name, "facetVersion": 1, "window": map_window(map),
+            "facetId": id, "name": name, "facetVersion": definition["versions"][0]["version"], "window": map_window(map),
             "usableCount": assignments.len(), "awaitingCount": 0,
             "counts": { "total": assignments.len(), "assigned": assigned, "outlier": assignments.len()-assigned,
                 "awaitingMap": 0, "notApplicable": 0, "insufficientInput": 0, "emptyInput": 0, "inputTooLarge": 0,
@@ -420,7 +441,12 @@ fn choice(selection: &Value, value: &str) -> bool {
     values.iter().any(|possible| possible == value) != (selection["operator"] == "none of")
 }
 
-fn matches_trace(store: &Store, project: &str, trace: &Trace, filters: &Value) -> Result<bool> {
+pub(crate) fn matches_trace(
+    store: &Store,
+    project: &str,
+    trace: &Trace,
+    filters: &Value,
+) -> Result<bool> {
     let public = trace.public();
     if includes(&public, filters) {
         return Ok(true);
@@ -450,7 +476,9 @@ fn trace_facets(store: &Store, project: &str, trace: &str) -> Result<Value> {
         .filter(|map| map["mode"] == "live")
     {
         let id = required(&map, "id")?;
-        for (facet, name, _) in FACETS {
+        for definition in topics::facet_versions(store, project)? {
+            let facet = required(&definition, "id")?;
+            let name = &definition["name"];
             let publication = topics::result(store, project, id, Some(facet))?;
             let Some(row) = publication["assignments"]
                 .as_array()
@@ -477,7 +505,7 @@ fn trace_facets(store: &Store, project: &str, trace: &str) -> Result<Value> {
     Ok(json!(results))
 }
 
-fn model_settings(store: &Store, project: &str) -> Result<Value> {
+pub(super) fn stored_map_models(store: &Store, project: &str) -> Result<Value> {
     let maps = store.resources(project, MAPS)?;
     let map = maps
         .iter()
@@ -496,6 +524,7 @@ fn model_settings(store: &Store, project: &str) -> Result<Value> {
         "summary": slot("summaryProvider", "model"), "embedding": slot("embeddingProvider", "embeddingModel"),
         "clustering": slot("namingProvider", "model"), "embeddingDimensions": map.and_then(|map| map["dimensions"].as_u64()).unwrap_or(1024),
         "enabled": map.map(|map| map["enabled"] != false), "blockedAt": null, "blockReason": null, "blockMessage": null,
+        "traceIdleMs": map.and_then(|map| map["readinessSeconds"].as_u64()).map(|seconds| seconds * 1_000),
     }))
 }
 
@@ -505,6 +534,53 @@ fn runs_for_map(store: &Store, project: &str, map: &Value) -> Result<Vec<Value>>
         .into_iter()
         .filter(|run| run["mapId"] == map["id"])
         .collect())
+}
+
+fn filter_options(store: &Store, project: &str) -> Result<Value> {
+    let maps = store.resources(project, MAPS)?;
+    let mut options = BTreeMap::<String, BTreeSet<String>>::new();
+    for definition in topics::facet_versions(store, project)? {
+        let id = required(&definition, "id")?;
+        let name = required(&definition, "name")?;
+        for map in maps.iter().filter(|map| map["mode"] == "live") {
+            let publication = topics::result(store, project, required(map, "id")?, Some(id))?;
+            for topic in publication["topics"].as_array().into_iter().flatten() {
+                options
+                    .entry(name.to_owned())
+                    .or_default()
+                    .insert(required(topic, "name")?.to_owned());
+            }
+        }
+    }
+    Ok(json!(options))
+}
+
+fn stripe_map(store: &Store, project: &str, facet: &str) -> Result<Value> {
+    let Some(definition) = topics::facet_versions(store, project)?
+        .into_iter()
+        .find(|definition| definition["name"] == facet)
+    else {
+        return Ok(Value::Null);
+    };
+    let facet_id = required(&definition, "id")?;
+    for map in store
+        .resources(project, MAPS)?
+        .into_iter()
+        .rev()
+        .filter(|map| map["mode"] == "live")
+    {
+        let id = required(&map, "id")?;
+        let result = topics::result(store, project, id, Some(facet_id))?;
+        if result["assignments"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+        {
+            return Ok(
+                json!({"facetId":facet_id,"ruleId":id,"mapName":map["name"],"runId":format!("{id}/{facet_id}")}),
+            );
+        }
+    }
+    Ok(Value::Null)
 }
 
 fn get_execution(store: &Store, project: &str, id: &str) -> Result<(Value, Option<Value>)> {

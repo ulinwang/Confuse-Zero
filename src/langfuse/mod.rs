@@ -8,13 +8,17 @@ use rusqlite::params;
 use serde_json::{Value, json};
 use std::{fmt, sync::LazyLock};
 
+mod comments;
 mod dashboard;
 mod datasets;
 mod gateway;
 pub(crate) mod playground;
-mod topic_maps;
+mod scores;
+pub(crate) mod topic_maps;
+pub(crate) mod topic_setup;
 mod tracing;
 mod versioned;
+mod views;
 
 const LOCAL_ORGANIZATION: &str = "local";
 static PROCEDURES: LazyLock<Value> = LazyLock::new(|| {
@@ -144,7 +148,12 @@ async fn execute(store: &Store, name: &str, input: &Value) -> Result<Value> {
         "public.checkUpdate" => Value::Null,
         "backgroundMigrations.status" => json!({ "status": "FINISHED" }),
         "scores.getScoreColumns" => dashboard::score_columns(store, project, input)?,
+        _ if name.starts_with("scores.") || name.starts_with("scoreConfigs.") => {
+            scores::request(store, project, name, input)?
+        }
         "organizations.lastTraceByProject" => dashboard::last_trace_by_project(store)?,
+        _ if name.starts_with("TableViewPresets.") => views::request(store, project, name, input)?,
+        _ if name.starts_with("comments.") => comments::request(store, project, name, input)?,
         _ if name.starts_with("llmApiKey.") => {
             playground::connection(store, project, name, input).await?
         }
@@ -252,7 +261,9 @@ async fn execute(store: &Store, name: &str, input: &Value) -> Result<Value> {
             datasets::request(store, project, name, input)?
         }
         _ if name.starts_with("aiGateway.") => gateway::request(store, name, input)?,
-        _ if name.starts_with("topics.") => topic_maps::request(store, project, name, input)?,
+        _ if name.starts_with("topics.") => {
+            topic_maps::request(store, project, name, input).await?
+        }
         _ if name.starts_with("prompts.") || name.starts_with("skills.") => {
             versioned::request(store, project, name, input)?
         }
@@ -289,9 +300,21 @@ fn mark_dates(value: &Value, parent: &str, dates: &mut Vec<String>, topics: bool
                             dates.push(path);
                         }
                     }
+                    "value" if fields.get("type").is_some_and(|kind| kind == "datetime") => {
+                        if parse_time(value).is_some() {
+                            dates.push(path);
+                        }
+                    }
+                    "timestamp" if topics && parent == "nextCursor" => {
+                        if parse_time(value).is_some() {
+                            dates.push(path);
+                        }
+                    }
                     "timestamp"
                     | "createdAt"
                     | "updatedAt"
+                    | "minTimestamp"
+                    | "maxTimestamp"
                     | "startTime"
                     | "endTime"
                     | "completionStartTime"

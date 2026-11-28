@@ -466,7 +466,7 @@ impl Store {
         data["timestamp"] = json!(iso(now));
         data["createdAt"] = json!(iso(now));
         data["updatedAt"] = json!(iso(now));
-        if kind == "CATEGORICAL" || kind == "TEXT" {
+        if (kind == "CATEGORICAL" || kind == "TEXT") && data["stringValue"].is_null() {
             data["stringValue"] = value;
         }
         self.access(|conn| {

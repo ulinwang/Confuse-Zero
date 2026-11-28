@@ -1,7 +1,7 @@
 use super::fail;
 use crate::{
     desktop::required,
-    model::{Observation, TraceFilter, cost_total, iso, parse_time, usage_total},
+    model::{Observation, Trace, TraceFilter, cost_total, iso, now_ns, parse_time, usage_total},
     resources::matches_filters,
     store::{Store, decode},
 };
@@ -112,13 +112,25 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
         }
         "events.byTraceId" => {
             let id = required(input, "traceId")?;
-            store
+            let trace = store
                 .trace(project, id)?
                 .ok_or_else(|| fail("NOT_FOUND", "Trace not found"))?;
             const LIMIT: usize = 10_000;
             let (rows, total) = store.observations(project, Some(id), None, LIMIT, 0)?;
+            let mut observations = rows
+                .iter()
+                .map(|row| event_wire(row, &trace, project, false))
+                .collect::<Vec<_>>();
+            if observations.is_empty() {
+                observations.push(event_wire(
+                    &trace_observation(&trace),
+                    &trace,
+                    project,
+                    false,
+                ));
+            }
             json!({
-                "observations": rows.iter().map(|row| observation_wire(row, project, false)).collect::<Vec<_>>(),
+                "observations": observations,
                 "cutoffObservationsAfterMaxCount": total > LIMIT, "maxObservationsPerTrace": LIMIT,
             })
         }
@@ -147,8 +159,13 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
                 if requested_trace.is_some_and(|expected| expected != trace) {
                     bail!("Observation trace does not match");
                 }
-                if let Some(observation) = observation(store, project, trace, required(id, "id")?)?
-                {
+                let observation_id = required(id, "id")?;
+                let item = if observation_id == format!("t-{trace}") {
+                    store.trace(project, trace)?.as_ref().map(trace_observation)
+                } else {
+                    observation(store, project, trace, observation_id)?
+                };
+                if let Some(observation) = item {
                     let mut value = json!({"id": observation.id, "input": observation.input, "output": observation.output, "metadata": observation.metadata});
                     compact_io(
                         &mut value,
@@ -165,14 +182,196 @@ pub(super) fn request(store: &Store, project: &str, name: &str, input: &Value) -
         "observations.byId" => {
             let id = required(input, "observationId")?;
             let trace = required(input, "traceId")?;
-            let row = observation(store, project, trace, id)?
-                .ok_or_else(|| fail("NOT_FOUND", "Observation not found"))?;
+            let item = if id == format!("t-{trace}") {
+                store.trace(project, trace)?.as_ref().map(trace_observation)
+            } else {
+                observation(store, project, trace, id)?
+            };
+            let row = item.ok_or_else(|| fail("NOT_FOUND", "Observation not found"))?;
             let mut data = observation_wire(&row, project, true);
             compact_io(&mut data, input["verbosity"].as_str());
             data
         }
         "sessions.hasAny" | "sessions.hasAnyFromEvents" => {
             json!(store.sessions(project, 0, 0)?.1 > 0)
+        }
+        "events.getSdkVersionInfo" => {
+            let recent = now_ns() - 7 * 86_400_000_000_000;
+            store.access(|conn| {
+                Ok(json!({"isOtel":conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM traces WHERE project=?1 AND source='SDK' AND start_ns>=?2)",
+                    params![project,recent], |row|row.get::<_,bool>(0),
+                )?}))
+            })?
+        }
+        "sessions.tracesFromEvents" => {
+            let traces = session_traces(store, project, required(input, "sessionId")?)?;
+            json!(wire_session_traces(
+                store,
+                project,
+                traces,
+                &input["filter"]
+            )?)
+        }
+        "sessions.byIdWithScores" | "sessions.byIdWithScoresFromEvents" => {
+            let session = required(input, "sessionId")?;
+            let traces = session_traces(store, project, session)?;
+            if traces.is_empty() {
+                return Err(fail("NOT_FOUND", "Session not found"));
+            }
+            let mut details = session_metrics(store, project, session, &traces)?;
+            details["users"] = json!(
+                traces
+                    .iter()
+                    .filter_map(|trace| trace.user_id.as_deref())
+                    .collect::<std::collections::BTreeSet<_>>()
+            );
+            details["countTraces"] = json!(traces.len());
+            details["projectId"] = json!(project);
+            details["environment"] = json!(traces[0].environment);
+            details["bookmarked"] = session_bookmarked(store, project, session)?;
+            details["public"] = json!(false);
+            let scores: Vec<_> = store
+                .scores(project, None, None, i64::MAX as usize, 0)?
+                .0
+                .into_iter()
+                .filter(|score| score["sessionId"] == session)
+                .collect();
+            details["scores"] = json!(scores);
+            if name == "sessions.byIdWithScores" {
+                details["traces"] =
+                    json!(wire_session_traces(store, project, traces, &Value::Null)?);
+            }
+            details
+        }
+        "sessions.metrics" | "sessions.metricsFromEvents" => {
+            let ids = input["sessionIds"]
+                .as_array()
+                .context("Session IDs are required")?;
+            if ids.len() > 500 {
+                bail!("Too many session IDs");
+            }
+            let mut results = Vec::new();
+            for id in ids {
+                let session = id.as_str().context("Invalid session ID")?;
+                let traces = session_traces(store, project, session)?;
+                if !traces.is_empty() {
+                    results.push(session_metrics(store, project, session, &traces)?);
+                }
+            }
+            json!(results)
+        }
+        "sessions.filterOptions" | "sessions.filterOptionsFromEvents" => {
+            let rows: Vec<_> = trace_rows(store, project, input)?
+                .into_iter()
+                .filter(|row| !row["sessionId"].is_null())
+                .collect();
+            let choices = trace_filter_options(store, project, &rows)?;
+            json!({"userIds":choices["users"],"tags":choices["tags"],"environment":options(&rows,"environment"),
+                "scores_avg":choices["scores_avg"],"score_categories":choices["score_categories"],"score_booleans":choices["score_booleans"]})
+        }
+        "sessions.previewTree" => {
+            let traces = session_traces(store, project, required(input, "sessionId")?)?;
+            let mut previews = Vec::new();
+            for trace in traces.iter().take(100) {
+                let (rows, count) = store.observations(project, Some(&trace.id), None, 100, 0)?;
+                previews.push(json!({"id":trace.id,"name":trace.name,"timestamp":iso(trace.start_ns),
+                    "truncated":count>rows.len(),"observations":rows.iter().map(|row|observation_wire(row,project,false)).collect::<Vec<_>>() }));
+            }
+            json!(previews)
+        }
+        "sessions.observationsForTraceFromEvents" | "sessions.observationFullIOFromEvents" => {
+            let trace_id = required(input, "traceId")?;
+            let session_id = required(input, "sessionId")?;
+            let trace = store
+                .trace(project, trace_id)?
+                .filter(|trace| trace.session_id.as_deref() == Some(session_id))
+                .ok_or_else(|| fail("NOT_FOUND", "Trace does not belong to this session"))?;
+            if name == "sessions.observationFullIOFromEvents" {
+                let row = observation(store, project, trace_id, required(input, "observationId")?)?
+                    .ok_or_else(|| fail("NOT_FOUND", "Observation not found"))?;
+                let mut wire =
+                    json!({"input":row.input,"output":row.output,"metadata":row.metadata});
+                compact_io(&mut wire, None);
+                wire
+            } else {
+                let mut options = input.clone();
+                options["filter"] = json!(
+                    input["filter"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|filter| filter["type"] != "positionInTrace")
+                        .collect::<Vec<_>>()
+                );
+                let observed = store
+                    .observations(project, Some(&trace.id), None, 10_000, 0)?
+                    .0;
+                let mut rows = Vec::new();
+                for item in &observed {
+                    let wire = item.public(project);
+                    if !includes(&wire, &options["filter"]) {
+                        continue;
+                    }
+                    let mut wire = observation_wire(item, project, true);
+                    for field in ["input", "output", "metadata"] {
+                        let length = wire[field].as_str().map(str::len).unwrap_or(0);
+                        let truncated = length > 10_000;
+                        wire[format!("{field}Length")] = json!(length);
+                        wire[format!("{field}Truncated")] = json!(truncated);
+                        if truncated {
+                            wire[field] = json!(
+                                wire[field]
+                                    .as_str()
+                                    .unwrap()
+                                    .chars()
+                                    .take(4_000)
+                                    .collect::<String>()
+                            );
+                        }
+                    }
+                    rows.push(wire);
+                }
+                let position = input["filter"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|filter| filter["type"] == "positionInTrace");
+                if let Some(position) = position {
+                    let index =
+                        position["value"].as_u64().unwrap_or(1).clamp(1, 10_000) as usize - 1;
+                    let item = match position["key"].as_str() {
+                        Some("last" | "nthFromEnd") => rows.iter().rev().nth(index),
+                        Some("root") => rows.iter().find(|row| row["isRootObservation"] == true),
+                        _ => rows.get(index),
+                    };
+                    json!(item.into_iter().collect::<Vec<_>>())
+                } else {
+                    json!(rows.into_iter().take(51).collect::<Vec<_>>())
+                }
+            }
+        }
+        "sessions.bookmark" => {
+            let id = required(input, "sessionId")?;
+            if session_traces(store, project, id)?.is_empty() {
+                return Err(fail("NOT_FOUND", "Session not found"));
+            }
+            let saved = input["bookmarked"]
+                .as_bool()
+                .context("Bookmark value is required")?;
+            store.access(|conn| {
+                let key = session_key(project, id);
+                if saved {
+                    conn.execute(
+                        "INSERT OR REPLACE INTO settings(key,value) VALUES(?1,true)",
+                        [key],
+                    )?;
+                } else {
+                    conn.execute("DELETE FROM settings WHERE key=?1", [key])?;
+                }
+                Ok(())
+            })?;
+            Value::Null
         }
         "sessions.all"
         | "sessions.allFromEvents"
@@ -211,10 +410,28 @@ fn observation(store: &Store, project: &str, trace: &str, id: &str) -> Result<Op
 fn observation_wire(item: &Observation, project: &str, with_io: bool) -> Value {
     let mut data = item.public(project);
     data["internalModel"] = json!(item.model);
+    data["internalModelId"] = Value::Null;
     data["isRootObservation"] = json!(item.parent_id.is_none());
     data["totalTokens"] = json!(usage_total(&item.usage));
-    data["inputUsage"] = item.usage["input"].clone();
-    data["outputUsage"] = item.usage["output"].clone();
+    data["inputUsage"] = json!(item.usage["input"].as_i64().unwrap_or(0));
+    data["outputUsage"] = json!(item.usage["output"].as_i64().unwrap_or(0));
+    data["totalUsage"] = json!(usage_total(&item.usage).unwrap_or(0));
+    data["inputCost"] = item.cost["input"].clone();
+    data["outputCost"] = item.cost["output"].clone();
+    data["createdAt"] = json!(iso(item.start_ns));
+    data["updatedAt"] = json!(iso(item.end_ns.max(item.start_ns)));
+    data["providedUsageDetails"] = json!({});
+    data["providedCostDetails"] = json!({});
+    for field in [
+        "promptId",
+        "toolDefinitions",
+        "toolCalls",
+        "toolCallNames",
+        "usagePricingTierId",
+        "usagePricingTierName",
+    ] {
+        data[field] = Value::Null;
+    }
     if !with_io {
         data.as_object_mut()
             .expect("observation object")
@@ -225,6 +442,38 @@ fn observation_wire(item: &Observation, project: &str, with_io: bool) -> Value {
     }
     compact_io(&mut data, None);
     data
+}
+
+fn event_wire(item: &Observation, trace: &Trace, project: &str, with_io: bool) -> Value {
+    let mut event = observation_wire(item, project, with_io);
+    event["traceName"] = json!(trace.name);
+    event["traceTags"] = json!(trace.tags);
+    event["sessionId"] = json!(trace.session_id);
+    event["userId"] = json!(trace.user_id);
+    event["release"] = json!(trace.release);
+    event["bookmarked"] = json!(false);
+    event["public"] = json!(false);
+    event
+}
+
+fn trace_observation(trace: &Trace) -> Observation {
+    Observation {
+        id: format!("t-{}", trace.id),
+        trace_id: trace.id.clone(),
+        kind: "SPAN".to_owned(),
+        name: trace.name.clone(),
+        level: "DEFAULT".to_owned(),
+        environment: trace.environment.clone(),
+        input: trace.input.clone(),
+        output: trace.output.clone(),
+        metadata: trace.metadata.clone(),
+        usage: json!({}),
+        cost: json!({}),
+        start_ns: trace.start_ns,
+        end_ns: trace.end_ns,
+        version: trace.version.clone(),
+        ..Observation::default()
+    }
 }
 
 fn compact_io(data: &mut Value, verbosity: Option<&str>) {
@@ -283,13 +532,7 @@ fn event_rows(store: &Store, project: &str, input: &Value) -> Result<Vec<Value>>
         .rev()
         .filter_map(|item| {
             let trace = traces.get(item.trace_id.as_str())?;
-            let mut row = item.public(project);
-            row["traceName"] = json!(trace.name);
-            row["traceTags"] = json!(trace.tags);
-            row["sessionId"] = json!(trace.session_id);
-            row["userId"] = json!(trace.user_id);
-            row["release"] = json!(trace.release);
-            row["isRootObservation"] = json!(item.parent_id.is_none());
+            let mut row = event_wire(&item, trace, project, true);
             row["hasParentObservation"] = json!(item.parent_id.is_some());
             if matches_search(&row, input)
                 && includes(&row, &input["filter"])
@@ -325,7 +568,7 @@ fn session_rows(store: &Store, project: &str, input: &Value) -> Result<Vec<Value
             groups.entry(id).or_default().push(trace);
             groups
         });
-    Ok(sessions
+    let mut rows = sessions
         .into_iter()
         .filter_map(|mut row| {
             let group = by_id.get(row["id"].as_str()?)?;
@@ -343,9 +586,102 @@ fn session_rows(store: &Store, project: &str, input: &Value) -> Result<Vec<Value
                     .flat_map(|trace| trace.tags.iter())
                     .collect::<std::collections::BTreeSet<_>>()
             );
-            includes(&row, &input["filter"]).then_some(row)
+            Some(row)
         })
-        .collect())
+        .collect::<Vec<_>>();
+    let prefix = session_key(project, "");
+    let bookmarks = store.access(|conn| {
+        let mut statement = conn.prepare(
+            "SELECT substr(key,length(?1)+1) FROM settings WHERE substr(key,1,length(?1))=?1",
+        )?;
+        Ok(statement
+            .query_map([prefix], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<std::collections::BTreeSet<_>>>()?)
+    })?;
+    for row in &mut rows {
+        row["bookmarked"] = json!(bookmarks.contains(required(row, "id")?));
+    }
+    rows.retain(|row| includes(row, &input["filter"]));
+    Ok(rows)
+}
+
+fn session_traces(store: &Store, project: &str, id: &str) -> Result<Vec<Trace>> {
+    Ok(store
+        .traces(
+            project,
+            &TraceFilter {
+                session: Some(id),
+                ..Default::default()
+            },
+            i64::MAX as usize,
+            0,
+        )?
+        .0)
+}
+
+fn session_key(project: &str, id: &str) -> String {
+    format!("session-bookmark:{project}:{id}")
+}
+
+fn session_bookmarked(store: &Store, project: &str, id: &str) -> Result<Value> {
+    store.access(|conn| {
+        Ok(json!(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE key=?1)",
+            [session_key(project, id)],
+            |row| row.get::<_, bool>(0)
+        )?))
+    })
+}
+
+fn wire_session_traces(
+    store: &Store,
+    project: &str,
+    traces: Vec<Trace>,
+    filters: &Value,
+) -> Result<Vec<Value>> {
+    let mut rows = Vec::new();
+    for trace in traces {
+        let mut wire = trace.public();
+        if !includes(&wire, filters) {
+            continue;
+        }
+        wire["projectId"] = json!(project);
+        wire["scores"] = json!(store.scores(project, Some(&trace.id), None, 500, 0)?.0);
+        compact_io(&mut wire, None);
+        rows.push(wire);
+    }
+    rows.reverse();
+    Ok(rows)
+}
+
+fn session_metrics(store: &Store, project: &str, id: &str, traces: &[Trace]) -> Result<Value> {
+    let mut all = Vec::new();
+    for trace in traces {
+        all.extend(
+            store
+                .observations(project, Some(&trace.id), None, i64::MAX as usize, 0)?
+                .0,
+        );
+    }
+    let times = traces.iter().map(|trace| trace.start_ns).min().zip(
+        traces
+            .iter()
+            .map(|trace| trace.end_ns.max(trace.start_ns))
+            .max(),
+    );
+    let duration = times.map(|(start, end)| crate::model::seconds(start, end));
+    let mut data = observation_metrics(&all);
+    data["id"] = json!(id);
+    data["sessionId"] = json!(id);
+    data["trace_count"] = json!(traces.len());
+    data["total_observations"] = json!(all.len());
+    data["sessionDuration"] = json!(duration);
+    data["promptTokens"] = data["inputUsage"].clone();
+    data["completionTokens"] = data["outputUsage"].clone();
+    data["totalTokens"] = data["totalUsage"].clone();
+    data["minTimestamp"] = json!(times.map(|(start, _)| iso(start)));
+    data["maxTimestamp"] = json!(times.map(|(_, end)| iso(end)));
+    Ok(data)
 }
 
 fn trace_filter_options(store: &Store, project: &str, rows: &[Value]) -> Result<Value> {
