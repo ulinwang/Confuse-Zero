@@ -85,12 +85,21 @@ impl Provider {
     }
 
     async fn send(&self, project: &str, route: &str, value: &Value) -> Result<Value> {
+        bounded_json(self.send_request(project, route, value).await?).await
+    }
+
+    pub(crate) async fn send_request(
+        &self,
+        project: &str,
+        route: &str,
+        value: &Value,
+    ) -> Result<reqwest::Response> {
         let request = self.with_key(project, client()?.post(self.endpoint(route)?).json(value))?;
         let response = request.send().await?;
         if !response.status().is_success() {
             bail!("{} returned HTTP {}", self.name, response.status().as_u16());
         }
-        bounded_json(response).await
+        Ok(response)
     }
 
     pub async fn complete(
@@ -287,7 +296,7 @@ fn client() -> Result<Client> {
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-async fn bounded_json(mut response: reqwest::Response) -> Result<Value> {
+pub(crate) async fn bounded_json(mut response: reqwest::Response) -> Result<Value> {
     let mut data = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         if data.len() + chunk.len() > RESPONSE_CAP {
@@ -522,7 +531,7 @@ fn capture_sse(bytes: &[u8]) -> (Value, Value) {
     (json!(text), Value::Object(usage))
 }
 
-fn metrics(data: &Value) -> Value {
+pub(crate) fn metrics(data: &Value) -> Value {
     let mut result = Map::new();
     for (name, keys) in [
         ("input", &["prompt_tokens", "input_tokens"][..]),

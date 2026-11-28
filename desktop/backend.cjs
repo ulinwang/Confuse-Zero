@@ -5,6 +5,7 @@ class Backend {
   constructor(executable, directory) {
     this.nextId = 0;
     this.pending = new Map();
+    this.streams = new Map();
     this.child = spawn(executable, ["desktop", directory], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
@@ -35,6 +36,11 @@ class Backend {
       this.resolveReady();
       return;
     }
+    if (message.stream) {
+      const stream = this.streams.get(message.id);
+      if (stream) stream.receive(message);
+      return;
+    }
     const pending = this.pending.get(message.id);
     if (!pending) return;
     clearTimeout(pending.timer);
@@ -51,6 +57,7 @@ class Backend {
       reject(error);
     }
     this.pending.clear();
+    for (const stream of this.streams.values()) stream.fail(error);
   }
 
   async request(channel, payload) {
@@ -68,6 +75,64 @@ class Backend {
         clearTimeout(timer);
         this.pending.delete(id);
         reject(error);
+      });
+    });
+  }
+
+  async playground(payload, signal) {
+    await this.ready;
+    if (signal?.aborted) throw signal.reason;
+    if (this.child.exitCode !== null || !this.child.stdin.writable) throw new Error("Rust backend stopped");
+    const id = ++this.nextId;
+    const encoder = new TextEncoder();
+    return new Promise((resolve, reject) => {
+      let controller;
+      let started = false;
+      const cleanup = () => {
+        this.streams.delete(id);
+        signal?.removeEventListener("abort", abort);
+        clearTimeout(deadline);
+      };
+      const cancel = () => {
+        cleanup();
+        if (this.child.stdin.writable) {
+          this.child.stdin.write(JSON.stringify({ id: ++this.nextId, channel: "langfuse.cancel-playground", payload: { id } }) + "\n", () => {});
+        }
+      };
+      const fail = error => {
+        if (!this.streams.has(id)) return;
+        if (started) controller.error(error);
+        else reject(error);
+        cancel();
+      };
+      const abort = () => fail(signal.reason || new Error("Playground request canceled"));
+      const body = new ReadableStream({
+        start(stream) { controller = stream; },
+        cancel,
+      });
+      const deadline = setTimeout(() => fail(new Error("Playground request timed out")), 125_000);
+      this.streams.set(id, {
+        fail,
+        receive(message) {
+          if (message.stream === "start" && !started) {
+            started = true;
+            resolve(new Response(body, {
+              status: message.status,
+              headers: { "content-type": message.contentType, "cache-control": "no-store" },
+            }));
+          } else if (message.stream === "chunk" && started) {
+            controller.enqueue(encoder.encode(message.chunk));
+          } else if (message.stream === "end" && started) {
+            controller.close();
+            cleanup();
+          } else if (message.stream === "error") {
+            fail(new Error(message.message));
+          }
+        },
+      });
+      signal?.addEventListener("abort", abort, { once: true });
+      this.child.stdin.write(JSON.stringify({ id, channel: "langfuse.playground", payload }) + "\n", error => {
+        if (error) fail(error);
       });
     });
   }

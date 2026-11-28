@@ -1,0 +1,219 @@
+[
+  {
+    "id": "__langfuse_errors_only",
+    "name": "Errors Only",
+    "description": "Focus on observations that failed",
+    "tableName": "observations-events",
+    "category": "errors",
+    "filters": [
+      {
+        "column": "level",
+        "type": "stringOptions",
+        "operator": "any of",
+        "value": [
+          "ERROR"
+        ]
+      }
+    ],
+    "columnOrder": [],
+    "columnVisibility": {},
+    "orderBy": null,
+    "searchQuery": "",
+    "isSystem": true,
+    "createdBy": null,
+    "createdByUser": null
+  },
+  {
+    "id": "__langfuse_latency_over_10s",
+    "name": "Latency over 10s",
+    "description": "Observations taking longer than 10 seconds",
+    "tableName": "observations-events",
+    "category": "slow-calls",
+    "filters": [
+      {
+        "column": "latency",
+        "type": "number",
+        "operator": ">",
+        "value": 10
+      }
+    ],
+    "columnOrder": [],
+    "columnVisibility": {},
+    "orderBy": {
+      "column": "latency",
+      "order": "DESC"
+    },
+    "searchQuery": "",
+    "isSystem": true,
+    "createdBy": null,
+    "createdByUser": null
+  },
+  {
+    "id": "__langfuse_slow_generations",
+    "name": "Slow generations",
+    "description": "Generation calls slower than 5 seconds",
+    "tableName": "observations-events",
+    "category": "slow-calls",
+    "filters": [
+      {
+        "column": "type",
+        "type": "stringOptions",
+        "operator": "any of",
+        "value": [
+          "GENERATION"
+        ]
+      },
+      {
+        "column": "latency",
+        "type": "number",
+        "operator": ">",
+        "value": 5
+      }
+    ],
+    "columnOrder": [],
+    "columnVisibility": {},
+    "orderBy": {
+      "column": "latency",
+      "order": "DESC"
+    },
+    "searchQuery": "",
+    "isSystem": true,
+    "createdBy": null,
+    "createdByUser": null
+  },
+  {
+    "id": "__langfuse_warnings_and_errors",
+    "name": "Warnings & errors",
+    "description": "Observations logged at WARNING or ERROR level",
+    "tableName": "observations-events",
+    "category": "errors",
+    "filters": [
+      {
+        "column": "level",
+        "type": "stringOptions",
+        "operator": "any of",
+        "value": [
+          "ERROR",
+          "WARNING"
+        ]
+      }
+    ],
+    "columnOrder": [],
+    "columnVisibility": {},
+    "orderBy": null,
+    "searchQuery": "",
+    "isSystem": true,
+    "createdBy": null,
+    "createdByUser": null
+  },
+  {
+    "id": "__langfuse_generations_only",
+    "name": "Review output (generations)",
+    "description": "LLM generation outputs, for reviewing response quality",
+    "tableName": "observations-events",
+    "category": "errors",
+    "filters": [
+      {
+        "column": "type",
+        "type": "stringOptions",
+        "operator": "any of",
+        "value": [
+          "GENERATION"
+        ]
+      }
+    ],
+    "columnOrder": [],
+    "columnVisibility": {},
+    "orderBy": null,
+    "searchQuery": "",
+    "isSystem": true,
+    "createdBy": null,
+    "createdByUser": null
+  },
+  {
+    "id": "__langfuse_missed_tool_calls",
+    "name": "Missed tool calls",
+    "description": "LLM calls that had tools available but didn't call any",
+    "tableName": "observations-events",
+    "category": "errors",
+    "filters": [
+      {
+        "column": "type",
+        "type": "stringOptions",
+        "operator": "any of",
+        "value": [
+          "GENERATION"
+        ]
+      },
+      {
+        "column": "toolDefinitions",
+        "type": "number",
+        "operator": ">",
+        "value": 0
+      },
+      {
+        "column": "toolCalls",
+        "type": "number",
+        "operator": "=",
+        "value": 0
+      }
+    ],
+    "columnOrder": [],
+    "columnVisibility": {},
+    "orderBy": null,
+    "searchQuery": "",
+    "isSystem": true,
+    "createdBy": null,
+    "createdByUser": null
+  },
+  {
+    "id": "__langfuse_high_cost",
+    "name": "High cost (> $1)",
+    "description": "Observations costing more than $1",
+    "tableName": "observations-events",
+    "category": "cost-regression",
+    "filters": [
+      {
+        "column": "totalCost",
+        "type": "number",
+        "operator": ">",
+        "value": 1
+      }
+    ],
+    "columnOrder": [],
+    "columnVisibility": {},
+    "orderBy": {
+      "column": "totalCost",
+      "order": "DESC"
+    },
+    "searchQuery": "",
+    "isSystem": true,
+    "createdBy": null,
+    "createdByUser": null
+  },
+  {
+    "id": "__langfuse_high_token_usage",
+    "name": "High token usage",
+    "description": "Observations using more than 50k tokens",
+    "tableName": "observations-events",
+    "category": "cost-regression",
+    "filters": [
+      {
+        "column": "totalTokens",
+        "type": "number",
+        "operator": ">",
+        "value": 50000
+      }
+    ],
+    "columnOrder": [],
+    "columnVisibility": {},
+    "orderBy": {
+      "column": "totalTokens",
+      "order": "DESC"
+    },
+    "searchQuery": "",
+    "isSystem": true,
+    "createdBy": null,
+    "createdByUser": null
+  }
+]

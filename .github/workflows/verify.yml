@@ -55,3 +55,19 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: npm run build --prefix desktop && npm test --prefix desktop
+  next-workspace:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/next/package-lock.json
+      - run: npm ci --prefix desktop/next --ignore-scripts --legacy-peer-deps
+      - run: npm run build:next --prefix desktop
+      - run: node desktop/next/audit.mjs --json > next-workspace-audit.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: next-workspace-audit
+          path: next-workspace-audit.json

@@ -1,0 +1,11 @@
+{
+  "@/src/ee/features/ui-customization/useUiCustomization": "local-deployment.ts",
+  "@/src/ee/features/ui-customization/instanceLinks": "local-deployment.ts",
+  "@/src/ee/features/billing/utils/isCloudBilling": "local-deployment.ts",
+  "@/src/ee/features/billing/components/SupportOrUpgradePage": "Unavailable.tsx",
+  "@/src/features/organizations/OrganizationSettingsPage": "local-deployment.ts",
+  "@/src/features/llm-api-key/components/BedrockRoleSetupInstructions/BedrockRoleSetupInstructions": "Unavailable.tsx",
+  "@/src/features/llm-api-key/useBedrockExternalId": "local-deployment.ts",
+  "@/src/ee/features/public-sharing/hooks/usePublicSharingDisabledReason": "local-deployment.ts",
+  "@/src/ee/features/external-media-storage/hooks/useHasExternalMediaStorageAccess": "local-deployment.ts"
+}

@@ -1,10 +1,13 @@
 // The BrowserWindow lifecycle, isolated preload and trusted-sender check follow
 // the MIT-licensed Confuse desktop shell (see LICENSE).
-const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, shell } = require("electron");
+const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, shell, utilityProcess } = require("electron");
 const { existsSync, mkdirSync } = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { Backend } = require("./backend.cjs");
+const { WorkspaceRenderer } = require("./next/window.cjs");
+const { appUrl } = require("./next/paths.cjs");
+const { workspaceApi } = require("./next/rpc.cjs");
 const { verifyBundle, removeInstallation } = require("./uninstall.cjs");
 const channels = require("./channels.cjs");
 
@@ -20,6 +23,8 @@ protocol.registerSchemesAsPrivileged([{ scheme: "confuse-ui", privileges: { stan
 
 let mainWindow;
 let backend;
+let workspaceRenderer;
+let lastProjectId = "local";
 let quitting = false;
 let didQuit = false;
 
@@ -27,7 +32,13 @@ function isTrustedSender(event) {
   return mainWindow && !mainWindow.isDestroyed() &&
     BrowserWindow.fromWebContents(event.sender) === mainWindow &&
     event.senderFrame === event.sender.mainFrame &&
-    event.senderFrame.url === ui + "/index.html";
+    trustedPage(event.senderFrame.url);
+}
+
+function trustedPage(href) {
+  if (!workspaceRenderer) return href === ui + "/index.html";
+  const route = appUrl(href);
+  return route !== null && workspaceRenderer.paths.page(route.pathname);
 }
 
 function createWindow() {
@@ -38,7 +49,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    titleBarStyle: "hiddenInset",
+    titleBarStyle: workspaceRenderer ? "default" : "hiddenInset",
     backgroundColor: "#f8f8f7",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -57,11 +68,14 @@ function createWindow() {
   });
   mainWindow.on("closed", () => { mainWindow = undefined; });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  mainWindow.webContents.on("will-navigate", event => event.preventDefault());
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!trustedPage(url)) event.preventDefault();
+  });
   mainWindow.webContents.on("will-attach-webview", event => event.preventDefault());
   mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   mainWindow.webContents.session.setPermissionCheckHandler(() => false);
-  void mainWindow.loadURL(ui + "/index.html");
+  const route = workspaceRenderer ? "/project/" + encodeURIComponent(lastProjectId) : "/index.html";
+  void mainWindow.loadURL(ui + route);
 }
 
 function showMainWindow() {
@@ -79,7 +93,7 @@ async function uninstall() {
   const bundle = path.resolve(process.execPath, "../../..");
   verifyBundle(bundle);
   await backend.request("desktop.cleanup", {});
-  await backend.stop();
+  await stopServices();
   didQuit = true;
   mainWindow.close();
   try {
@@ -138,16 +152,36 @@ function installMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([mac, { role: "editMenu" }, { role: "windowMenu" }]));
 }
 
-function setup() {
-  protocol.handle("confuse-ui", request => {
-    const url = new URL(request.url);
-    const requested = url.pathname.slice(1);
-    if (url.hostname !== "workspace" || !assets.has(requested) || !existsSync(path.join(renderer, requested))) return new Response("Not found", { status: 404 });
-    return net.fetch(pathToFileURL(path.join(renderer, requested)).href);
-  });
+function stopServices() {
+  return Promise.allSettled([workspaceRenderer?.stop(), backend?.stop()]);
+}
+
+async function setup() {
   const executable = app.isPackaged ? path.join(process.resourcesPath, "confuse-backend")
     : path.join(__dirname, "..", "target", "debug", "confuse");
   backend = new Backend(executable, data);
+  if (!app.isPackaged && process.env.CONFUSE_NEXT_WORKSPACE === "1") {
+    workspaceRenderer = new WorkspaceRenderer({
+      utilityProcess,
+      web: path.join(__dirname, "next", ".workspace", "web"),
+    });
+    await Promise.all([backend.ready, workspaceRenderer.ready]);
+    const state = await backend.request("langfuse.session", {});
+    if (state.lastProjectId) lastProjectId = state.lastProjectId;
+    const api = workspaceApi(backend, workspaceRenderer.catalog.access);
+    protocol.handle("confuse-ui", request => {
+      const route = appUrl(request.url);
+      if (route?.pathname.startsWith("/api/")) return api(request, route);
+      return workspaceRenderer.respond(request);
+    });
+  } else {
+    protocol.handle("confuse-ui", request => {
+      const url = appUrl(request.url);
+      const requested = url?.pathname.slice(1);
+      if (!requested || !assets.has(requested) || !existsSync(path.join(renderer, requested))) return new Response("Not found", { status: 404 });
+      return net.fetch(pathToFileURL(path.join(renderer, requested)).href);
+    });
+  }
   ipcMain.handle("confuse:invoke", invoke);
   installMenu();
   showMainWindow();
@@ -156,16 +190,21 @@ function setup() {
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
 } else {
-  app.whenReady().then(setup).catch(error => dialog.showErrorBox("Confuse", error.message));
-  app.on("second-instance", () => { if (app.isReady()) showMainWindow(); });
-  app.on("activate", () => { if (app.isReady()) showMainWindow(); });
+  const startup = app.whenReady().then(setup);
+  startup.catch(error => {
+    dialog.showErrorBox("Confuse", error.message);
+    app.quit();
+  });
+  const activate = () => { startup.then(showMainWindow, () => {}); };
+  app.on("second-instance", activate);
+  app.on("activate", activate);
   app.on("window-all-closed", () => {});
   app.on("before-quit", event => {
     if (didQuit || !backend) return;
     event.preventDefault();
     if (quitting) return;
     quitting = true;
-    backend.stop().finally(() => {
+    stopServices().finally(() => {
       didQuit = true;
       app.quit();
     });

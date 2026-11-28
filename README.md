@@ -25,4 +25,21 @@ Run the Rust and desktop tests with `cargo test --locked` and `npm test --prefix
 
 Run `cargo build --release --locked`, then `npm run package --prefix desktop` to build the local-install DMG under `dist`. By default the bundle is ad hoc signed for local validation. For distribution, set `CONFUSE_SIGN_IDENTITY` to a Developer ID Application identity and `CONFUSE_NOTARY_PROFILE` to the configured notarytool Keychain profile.
 
+### Next.js workspace preview
+
+The preview builds the Langfuse v4.88.0 workspace from commit `9eea2e60a1222936d78a28a0f0b2cafe690fc2a5`. The importer reads the pinned Git objects, excludes enterprise source directories and writes the original page hashes into the build manifest. Set `CONFUSE_LANGFUSE_SOURCE` to reuse a local checkout containing that commit. The build uses Node 24. The Electron preview uses its bundled Node runtime.
+
+```sh
+cargo build --locked
+npm ci --prefix desktop
+npm ci --prefix desktop/next --ignore-scripts --legacy-peer-deps
+npm run build:next --prefix desktop
+npm run audit:next --prefix desktop
+npm run start:next --prefix desktop
+```
+
+Set `CONFUSE_DATA_DIR` to an isolated directory for fixture testing. The audit reports page entry coverage and tRPC references by route. Add `-- --json` for the complete report.
+
+The preview is development-only while the workspace operation and installation checks in the acceptance matrix are open.
+
 [Acceptance rules](docs/acceptance.md) · [Verification matrix](docs/acceptance.tsv)

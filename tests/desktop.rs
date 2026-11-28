@@ -1,3 +1,7 @@
+use confuse::{
+    model::{Record, Trace},
+    store::Store,
+};
 use serde_json::{Value, json};
 use std::{
     fs::{self, OpenOptions},
@@ -148,4 +152,90 @@ fn desktop_backend_quits_and_recovers_agent_delta_from_disk() {
     assert_eq!(result["data"][0]["input"], "appended while closed");
     assert_eq!(result["data"][0]["output"], "fixture response");
     resumed.quit();
+}
+
+#[test]
+fn upstream_calls_preserve_sdk_keys_and_scope_data_after_upgrade() {
+    let root = tempdir().unwrap();
+    let data = root.path().join("state");
+    let sqlite = data.join("confuse.sqlite");
+    let store = Store::open(&sqlite).unwrap();
+    let saved = store.create_key("local", "sdk").unwrap();
+    let other = store.create_project("Second").unwrap();
+    for (project, trace_id) in [("local", "local-trace"), (other.id.as_str(), "other-trace")] {
+        store
+            .ingest(
+                project,
+                &[Record {
+                    trace: Trace {
+                        id: trace_id.to_owned(),
+                        name: "upgrade fixture".to_owned(),
+                        environment: "default".to_owned(),
+                        start_ns: 1_798_883_200_000_000_000,
+                        ..Trace::default()
+                    },
+                    root: true,
+                    observation: None,
+                }],
+            )
+            .unwrap();
+    }
+    drop(store);
+    rusqlite::Connection::open(&sqlite)
+        .unwrap()
+        .execute("DROP TABLE key_attributes", [])
+        .unwrap();
+
+    let mut app = Desktop::launch(&data);
+    let user = app.request("langfuse.session", json!({}));
+    let projects = user["projects"].as_array().unwrap();
+    assert_eq!(
+        projects
+            .iter()
+            .map(|p| p["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["local", &other.id]
+    );
+    let keys = app.request(
+        "langfuse.request",
+        json!({
+            "procedure":"projectApiKeys.byProjectId","input":{"projectId":"local"}
+        }),
+    );
+    assert_eq!(keys["data"][0]["publicKey"], saved.public_key);
+    assert!(keys["data"][0].get("secretKey").is_none());
+    let missing = app.request(
+        "langfuse.request",
+        json!({
+            "procedure":"traces.byId","input":{"projectId":"local","traceId":"other-trace"}
+        }),
+    );
+    assert_eq!(missing["error"]["code"], "NOT_FOUND");
+    let filtered = app.request("langfuse.request", json!({
+        "procedure":"traces.all","input":{"projectId":other.id,"page":0,"limit":1,
+            "filter":[{"column":"name","type":"string","value":"upgrade fixture","operator":"="}]}
+    }));
+    assert_eq!(filtered["data"]["traces"][0]["id"], "other-trace");
+    assert!(
+        filtered["dates"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("traces.0.timestamp"))
+    );
+    let unset = app.request(
+        "langfuse.request",
+        json!({
+            "procedure":"traces.countAll","input":{}
+        }),
+    );
+    assert_eq!(unset["error"]["code"], "BAD_REQUEST");
+    app.quit();
+    let store = Store::open(&sqlite).unwrap();
+    assert_eq!(
+        store
+            .project_for_key(&saved.public_key, &saved.secret_key)
+            .unwrap()
+            .as_deref(),
+        Some("local")
+    );
 }

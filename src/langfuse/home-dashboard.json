@@ -1,0 +1,120 @@
+{
+  "id": "langfuse-home-dashboard",
+  "name": "Langfuse Home",
+  "description": "Overview of traces, costs, scores, usage, and latencies in this project. Shown on the project home page.",
+  "definition": {
+    "widgets": [
+      {
+        "type": "preset",
+        "id": "home-traces",
+        "presetId": "home-traces",
+        "x": 0,
+        "y": 0,
+        "x_size": 4,
+        "y_size": 5
+      },
+      {
+        "type": "preset",
+        "id": "home-model-costs",
+        "presetId": "home-model-costs",
+        "x": 4,
+        "y": 0,
+        "x_size": 4,
+        "y_size": 5
+      },
+      {
+        "type": "preset",
+        "id": "home-scores-table",
+        "presetId": "home-scores-table",
+        "x": 8,
+        "y": 0,
+        "x_size": 4,
+        "y_size": 5
+      },
+      {
+        "type": "preset",
+        "id": "home-traces-obs-time-series",
+        "presetId": "home-traces-obs-time-series",
+        "x": 0,
+        "y": 5,
+        "x_size": 6,
+        "y_size": 6
+      },
+      {
+        "type": "preset",
+        "id": "home-model-usage",
+        "presetId": "home-model-usage",
+        "x": 6,
+        "y": 5,
+        "x_size": 6,
+        "y_size": 6
+      },
+      {
+        "type": "preset",
+        "id": "home-users",
+        "presetId": "home-users",
+        "x": 0,
+        "y": 11,
+        "x_size": 6,
+        "y_size": 6
+      },
+      {
+        "type": "preset",
+        "id": "home-chart-scores",
+        "presetId": "home-chart-scores",
+        "x": 6,
+        "y": 11,
+        "x_size": 6,
+        "y_size": 6
+      },
+      {
+        "type": "preset",
+        "id": "home-latency-table-traces",
+        "presetId": "home-latency-table-traces",
+        "x": 0,
+        "y": 17,
+        "x_size": 4,
+        "y_size": 5
+      },
+      {
+        "type": "preset",
+        "id": "home-latency-table-generations",
+        "presetId": "home-latency-table-generations",
+        "x": 4,
+        "y": 17,
+        "x_size": 4,
+        "y_size": 5
+      },
+      {
+        "type": "preset",
+        "id": "home-latency-table-observations",
+        "presetId": "home-latency-table-observations",
+        "x": 8,
+        "y": 17,
+        "x_size": 4,
+        "y_size": 5
+      },
+      {
+        "type": "preset",
+        "id": "home-generation-latency",
+        "presetId": "home-generation-latency",
+        "x": 0,
+        "y": 22,
+        "x_size": 12,
+        "y_size": 6
+      },
+      {
+        "type": "preset",
+        "id": "home-score-analytics",
+        "presetId": "home-score-analytics",
+        "x": 0,
+        "y": 28,
+        "x_size": 12,
+        "y_size": 6
+      }
+    ]
+  },
+  "filters": [],
+  "createdAt": "2026-07-06T00:00:00.000Z",
+  "updatedAt": "2026-07-09T00:00:00.000Z"
+}

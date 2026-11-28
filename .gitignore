@@ -9,4 +9,7 @@
 /desktop/node_modules/
 /desktop/build/
 /desktop/dist/
+/desktop/next/node_modules/
+/desktop/next/.source/
+/desktop/next/.workspace/
 /output/

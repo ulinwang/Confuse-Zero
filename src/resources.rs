@@ -28,7 +28,10 @@ pub const KINDS: &[&str] = &[
     "dashboard-widgets",
     "alerts",
     "exports",
+    "table-view-presets",
     "topic-maps",
+    "topic-facets",
+    "topic-cost-estimates",
     "topic-runs",
     "topic-publications",
 ];
@@ -249,12 +252,20 @@ impl Store {
 
     pub fn metrics(&self, project: &str, query: &Value) -> Result<Value> {
         let view = query["view"].as_str().unwrap_or("observations");
-        let dimensions: Vec<_> = query["dimensions"]
+        let mut dimensions: Vec<_> = query["dimensions"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|item| item["field"].as_str().or_else(|| item.as_str()))
             .collect();
+        if let Some(entity) = query["entityDimension"]["field"].as_str()
+            && !dimensions.contains(&entity)
+        {
+            dimensions.push(entity);
+        }
+        if !query["timeDimension"].is_null() {
+            dimensions.push("time_dimension");
+        }
         let requests: Vec<(&str, &str)> = query["metrics"]
             .as_array()
             .into_iter()
@@ -270,7 +281,7 @@ impl Store {
         let mut grouped: BTreeMap<Vec<String>, Vec<Value>> = BTreeMap::new();
         let mut offset = 0;
         loop {
-            let data = if view == "traces" {
+            let data = if matches!(view, "traces" | "traces-v2") {
                 self.traces(
                     project,
                     &TraceFilter {
@@ -285,7 +296,7 @@ impl Store {
                 .into_iter()
                 .map(|row| row.public())
                 .collect::<Vec<_>>()
-            } else if matches!(view, "scores-numeric" | "scores-categorical" | "scores") {
+            } else if view.starts_with("scores") {
                 self.scores(project, None, None, 1000, offset)?.0
             } else {
                 let rows = self.observations(project, None, None, 1000, offset)?.0;
@@ -314,10 +325,18 @@ impl Store {
             }
             offset += data.len();
             for row in data {
-                if row
-                    .get("timestamp")
-                    .and_then(crate::model::parse_time)
-                    .is_none_or(allowed_time)
+                let score_type_matches = match view {
+                    "scores-numeric" => {
+                        matches!(row["dataType"].as_str(), Some("NUMERIC" | "BOOLEAN"))
+                    }
+                    "scores-categorical" => row["dataType"] == "CATEGORICAL",
+                    _ => true,
+                };
+                if score_type_matches
+                    && row
+                        .get("timestamp")
+                        .and_then(crate::model::parse_time)
+                        .is_none_or(allowed_time)
                 {
                     group(&mut grouped, &dimensions, query, row);
                 }
@@ -339,6 +358,14 @@ impl Store {
                     .collect::<Vec<_>>();
                 let value = match *aggregation {
                     "count" => json!(rows.len()),
+                    "uniq" => json!(
+                        rows.iter()
+                            .filter_map(|row| row.get(*measure))
+                            .filter(|value| !value.is_null())
+                            .map(Value::to_string)
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
+                    ),
                     "sum" => json!(values.iter().sum::<f64>()),
                     "avg" => {
                         if values.is_empty() {
@@ -349,7 +376,7 @@ impl Store {
                     }
                     "min" => json!(values.iter().copied().reduce(f64::min)),
                     "max" => json!(values.iter().copied().reduce(f64::max)),
-                    "p50" | "p90" | "p95" | "p99" => {
+                    "p50" | "p75" | "p90" | "p95" | "p99" => {
                         values.sort_by(f64::total_cmp);
                         let percentile = aggregation
                             .trim_start_matches('p')
@@ -366,6 +393,31 @@ impl Store {
             }
             data.push(Value::Object(item));
         }
+        if let Some(order) = query["orderBy"].as_array() {
+            data.sort_by(|left, right| {
+                order
+                    .iter()
+                    .map(|item| {
+                        let field = item["field"].as_str().unwrap_or_default();
+                        let (left, right) = (&left[field], &right[field]);
+                        let cmp = left
+                            .as_f64()
+                            .zip(right.as_f64())
+                            .map(|(a, b)| a.total_cmp(&b))
+                            .unwrap_or_else(|| left.as_str().cmp(&right.as_str()));
+                        if item["direction"] == "desc" {
+                            cmp.reverse()
+                        } else {
+                            cmp
+                        }
+                    })
+                    .find(|order| !order.is_eq())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+        if let Some(limit) = query["chartConfig"]["row_limit"].as_u64() {
+            data.truncate(limit.min(1_000) as usize);
+        }
         Ok(json!({"data":data}))
     }
 }
@@ -381,9 +433,64 @@ fn group(
     }
     let keys = dimensions
         .iter()
-        .map(|field| row[*field].as_str().unwrap_or("-").to_owned())
+        .map(|field| {
+            if *field == "time_dimension" {
+                return metric_bucket(&row, query);
+            }
+            row[*field].as_str().map(str::to_owned).unwrap_or_else(|| {
+                if row[*field].is_null() {
+                    "-".to_owned()
+                } else {
+                    row[*field].to_string()
+                }
+            })
+        })
         .collect();
     grouped.entry(keys).or_default().push(row);
+}
+
+fn metric_bucket(row: &Value, query: &Value) -> String {
+    const SECOND: i64 = 1_000_000_000;
+    let parse = crate::model::parse_time;
+    let Some(time) = parse(&row["timestamp"]).or_else(|| parse(&row["startTime"])) else {
+        return "-".to_owned();
+    };
+    let seconds = match query["timeDimension"]["granularity"].as_str() {
+        Some("minute") => 60,
+        Some("5m") => 300,
+        Some("10m") => 600,
+        Some("15m") => 900,
+        Some("30m") => 1800,
+        Some("hour" | "1h") => 3600,
+        Some("2h") => 7200,
+        Some("4h") => 14_400,
+        Some("day" | "1d") => 86_400,
+        Some("2d") => 172_800,
+        Some("week" | "1w") => 604_800,
+        Some("month") => {
+            use chrono::Datelike;
+            if let Some(utc) = chrono::DateTime::from_timestamp(time.div_euclid(SECOND), 0)
+                && let Some(first) = utc.with_day(1)
+                && let Some(midnight) = first.date_naive().and_hms_opt(0, 0, 0)
+                && let Some(ns) = midnight.and_utc().timestamp_nanos_opt()
+            {
+                return iso(ns);
+            }
+            2_592_000
+        }
+        _ => {
+            let window = parse(&query["toTimestamp"])
+                .zip(parse(&query["fromTimestamp"]))
+                .map(|(end, start)| end.saturating_sub(start) / SECOND / 50)
+                .unwrap_or(3600);
+            [60, 300, 900, 3600, 14_400, 86_400, 604_800]
+                .into_iter()
+                .find(|interval| *interval >= window)
+                .unwrap_or(604_800)
+        }
+    };
+    let duration = seconds * SECOND;
+    iso(time.div_euclid(duration) * duration)
 }
 
 pub fn matches_filters(value: &Value, filters: &Value) -> bool {
